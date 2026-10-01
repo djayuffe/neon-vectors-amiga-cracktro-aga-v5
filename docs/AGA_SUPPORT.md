@@ -1,6 +1,7 @@
-# AGA support
+# NEON VECTORS AGA v5
 
-NEON VECTORS v5 uses one binary for OCS/ECS and AGA.
+NEON VECTORS v5 is the AGA edition. It uses one binary with a guarded OCS/ECS compatibility path,
+but AGA/Lisa hardware is the intended public target for this release.
 
 ## Runtime contract
 
@@ -18,4 +19,6 @@ OCS/ECS renders the original 12-bit (4:4:4) palette. AGA retains the same high-n
 
 ## Deliberately not enabled
 
-8 bitplanes, 64-bit fetch modes, HAM8, 1280-wide modes and AGA sprite extensions are not enabled in this compatibility release. Those change bandwidth/timing/data layout and require a separate measured renderer rather than opportunistic register writes.
+8 bitplanes, 64-bit fetch modes, HAM8, 1280-wide modes and AGA sprite extensions are not enabled in
+this v5 release. Those change bandwidth/timing/data layout and require a separate measured renderer
+rather than opportunistic register writes.

@@ -1,8 +1,9 @@
-# NEON VECTORS v5 — AGA compatibility/enhancement pass
+# NEON VECTORS AGA v5 — AGA edition release
 
 - Copyright (C) 2026 Ulf Bertilsson.
 - License: GPL-3.0-only.
-- One executable supports OCS, ECS and AGA.
+- Public release positioned as the AGA v5 edition.
+- One executable targets AGA first and keeps a guarded OCS/ECS compatibility fallback.
 - Runtime Lisa detection through DENISEID=$00F8.
 - OCS/ECS path never executes AGA-only register writes.
 - AGA uses FMODE=0 to preserve the proven 16-bit fetch/DMA timing.

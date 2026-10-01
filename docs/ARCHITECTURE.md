@@ -4,9 +4,11 @@ Copyright (C) 2026 Ulf Bertilsson. Licensed under GPL-3.0-only.
 
 ## Target
 
-A **PAL OCS/ECS, 68000** production. The 320×256 display window, the 50 Hz tracker tick and the
-frame-sync line are PAL-specific. It makes no claim about NTSC timing; on a 262-line frame it
-does not hang but is mistimed (see "Frame pipeline").
+A **PAL AGA v5** production with a guarded OCS/ECS compatibility path. The 320×256 display window,
+the 50 Hz tracker tick and the frame-sync line are PAL-specific. The AGA path detects Lisa through
+`DENISEID=$00F8`, keeps `FMODE=0` for the validated 16-bit fetch timing, and uses `BPLCON3.LOCT`
+to program the low RGB nibbles for colours 0-15. It makes no claim about NTSC timing; on a 262-line
+frame it does not hang but is mistimed (see "Frame pipeline").
 
 ## Startup and ownership
 
@@ -113,8 +115,12 @@ instead of hanging with interrupts disabled.
 
 ## Display
 
-- 320×256 low resolution PAL, four displayed bitplanes, 40 bytes per line; 21 words fetched per line with
+- AGA v5 path: 320×256 low resolution PAL, four displayed bitplanes, 40 bytes per line; 21 words fetched per line with
   modulo −2 and planes starting one word early (for the per-row `BPLCON1` scroll)
+- AGA palette precision: high RGB nibbles are still animated by the Copper; low RGB nibbles are
+  programmed through `BPLCON3.LOCT` during the guarded Lisa path.
+- Compatibility path: OCS/ECS machines skip AGA-only register writes and render the same effect set
+  with the 12-bit palette path.
 - Plane 0: logo, mid stars, scroller; plane 1: wireframe (double-buffered); plane 2: far/near stars; plane 3: the fourth logo/object plane (double-buffered)
 - Copper-programmed DIW/DDF, bitplane pointers, palette, and per-row colour and scroll changes
 
