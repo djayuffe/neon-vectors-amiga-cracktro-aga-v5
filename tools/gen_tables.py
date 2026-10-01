@@ -49,6 +49,9 @@ def bar_colors():
             out.append(lerp(0x001, base, pk / 4))
     return out
 
+LOGO_HEADER_PALETTE = [0x001, 0x100, 0x631, 0x963, 0xFC4, 0xFE9, 0xFFC, 0xFFF,
+                       0x424, 0x212, 0x246, 0x468, 0x6AC, 0xADF, 0xD42, 0xFFF]
+
 MID_PALETTE = [0x001, 0xAAD, 0x3FC, 0x3FC, 0x779, 0xFFF, 0x3FC, 0x3FC,
                0x39F, 0x39F, 0x9FF, 0x9FF, 0x39F, 0x39F, 0x9FF, 0x9FF]
 # index = plane0 + 2*plane1 + 4*plane2 + 8*plane3:
@@ -67,7 +70,7 @@ def mid_palette():
     return fmt_palette(MID_PALETTE, 1)
 
 def header_palette():
-    return fmt_palette(logo_art.PALETTE, 0)
+    return fmt_palette(LOGO_HEADER_PALETTE, 0)
 
 def copper():
     ent = []                # (y, regs) ; regs None = animated slot, 'wave' = wavy logo row, 'bar' = floor row

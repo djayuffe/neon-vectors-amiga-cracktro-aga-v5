@@ -921,8 +921,11 @@ def main():
         for ch in range(4):
             b0, b1, b2, b3 = mod[base + ch * 4: base + ch * 4 + 4]
             sn = (b0 & 0xF0) | (b2 >> 4); per = ((b0 & 15) << 8) | b1
+            fx, arg = b2 & 0x0F, b3
             if sn and per:
                 o, ln, ls, ll, vol = smp[sn - 1]
+                if fx == 0x0C:
+                    vol = min(arg, 64)
                 expected.append((r, ch, o, max(ln, 1), per, vol, ls, ll))
     got = [(l[1], l[2] - chip_mod_lo, l[3], l[4], l[5]) for l in a.latches]
     exp = [(e[1], e[2], e[3], e[4], e[5]) for e in expected]
@@ -1019,8 +1022,7 @@ def main():
     ok3 = diff('plane 3 (logo, displayed buffer)', sn['planes'][3], e3)
     # ---- palette / Copper
     pbl = sn['pal_by_line']
-    import logo_art
-    check(all(pbl[44 + 2][k] == logo_art.PALETTE[k] for k in (1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15)),
+    check(all(pbl[44 + 2][k] == gen_tables.LOGO_HEADER_PALETTE[k] for k in (1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15)),
           'the logo palette is not loaded by the Copper header')
     check(pbl[44 + 8][4] == 0xFFF, 'logo face colour at its top row is $%03X, expected white' % pbl[44 + 8][4])
     check(pbl[44 + 50][4] != pbl[44 + 8][4], 'the logo face colour has no vertical gradient')
