@@ -1,0 +1,9 @@
+NEON VECTORS
+
+Copyright (C) 2026 Ulf Bertilsson
+
+License: GPL-3.0-only
+
+The generated assets in `assets/` are deterministic outputs from the checked-in
+tools and are covered by the same GPL-3.0-only project license unless a file
+states otherwise.

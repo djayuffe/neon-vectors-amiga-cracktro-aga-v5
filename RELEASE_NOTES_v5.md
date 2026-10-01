@@ -1,5 +1,7 @@
 # NEON VECTORS v5 — AGA compatibility/enhancement pass
 
+- Copyright (C) 2026 Ulf Bertilsson.
+- License: GPL-3.0-only.
 - One executable supports OCS, ECS and AGA.
 - Runtime Lisa detection through DENISEID=$00F8.
 - OCS/ECS path never executes AGA-only register writes.

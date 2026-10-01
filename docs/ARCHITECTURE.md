@@ -1,5 +1,7 @@
 # Architecture
 
+Copyright (C) 2026 Ulf Bertilsson. Licensed under GPL-3.0-only.
+
 ## Target
 
 A **PAL OCS/ECS, 68000** production. The 320×256 display window, the 50 Hz tracker tick and the
@@ -127,3 +129,10 @@ addressing modes are used. Branches are not forced short.
 The intro takes Paula exclusively and leaves audio DMA off on exit: the previous audio-DMA state
 cannot be restored against changed channel registers without risking noise, so the restored
 `DMACON` mask (`DMAF_SYSTEM`, `$07F0`) excludes the four audio bits.
+
+## License boundary
+
+All source, tooling, generated assets and documentation in this repository are released under
+GPL-3.0-only by Ulf Bertilsson unless a file states otherwise. The generated `logo.raw`,
+`font.raw`, `neon.mod` and preview image are deterministic outputs from the checked-in tools and
+are covered by the same project license.

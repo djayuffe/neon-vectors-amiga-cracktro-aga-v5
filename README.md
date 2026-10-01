@@ -1,5 +1,7 @@
 # UBER CRACKING SERVICE presents: NEON VECTORS
 
+Copyright (C) 2026 Ulf Bertilsson. Licensed under GPL-3.0-only.
+
 A small, source-complete **PAL Motorola 68000 cracktro** for classic Amiga OCS/ECS and AGA hardware,
 written in assembly for [VASM](http://sun.hasenbraten.de/vasm/). It takes over the machine and
 shows a gradient logo, a **3D starfield**, a rotating **3D wireframe** (cube and octahedron drawn
@@ -29,6 +31,14 @@ bitplane memory while it runs on an emulated 68000. It is not a capture from a r
 - [Customising](#customising)
 - [Known limitations](#known-limitations)
 - [Documentation](#documentation)
+- [License](#license)
+
+## Project description
+
+Neon Vectors is an audited Amiga OCS/ECS/AGA cracktro-style demo and validation project. It combines
+PAL 68000 assembly, Copper gradients, blitter-driven wireframe rendering, a 3D starfield, sprite
+effects, ProTracker playback, deterministic asset generation and release tooling that can verify
+the shipped assets byte-for-byte.
 
 ## AGA support
 
@@ -286,7 +296,6 @@ The release intentionally ships only the validated wireframe renderer. Earlier P
 - **The wireframe is not clipped.** It is sized to stay inside its band; change it carefully.
 - **Not a general ProTracker player.** Only the effects the bundled tune uses are implemented.
 - **Not hardware-tested** — see above.
-- No licence file is included yet; until one is added, all rights are reserved by the author.
 
 ## Documentation
 
@@ -299,6 +308,12 @@ The release intentionally ships only the validated wireframe renderer. Earlier P
 | [`docs/VALIDATION.md`](docs/VALIDATION.md) | What each check enforces and why |
 | [`docs/BUILD_AND_TEST.md`](docs/BUILD_AND_TEST.md) | Build, test matrix and the emulator/hardware acceptance checklist |
 | [`RELEASE_NOTES.md`](RELEASE_NOTES.md) | Change history |
+
+## License
+
+Copyright (C) 2026 Ulf Bertilsson.
+
+This project is licensed under GPL-3.0-only. See [`LICENSE`](LICENSE).
 
 
 ## v4 presentation pass
