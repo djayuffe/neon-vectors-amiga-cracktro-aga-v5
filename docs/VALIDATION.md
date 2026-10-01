@@ -98,3 +98,7 @@ against real emulated hardware by running the program in FS-UAE.
 `tools/verify_repro.py` generates the logo, font, PNG preview and MOD twice and requires
 identical SHA-256 hashes. `MANIFEST.sha256` lists every shipped file
 (`shasum -a 256 -c MANIFEST.sha256`).
+
+## Release manifest integrity
+
+`python3 tools/verify_manifest.py` verifies every SHA-256 entry and also walks the release tree to reject shipped files that are not covered by `MANIFEST.sha256`. This makes the manifest a bidirectional release contract rather than a one-way checksum list. Run `make manifest` only when intentionally accepting a changed release tree, then `make verify-manifest`.

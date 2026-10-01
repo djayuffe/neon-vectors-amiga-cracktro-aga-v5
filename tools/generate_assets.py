@@ -98,37 +98,82 @@ periods={}; names=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']; base=[
 for octv in range(1,5):
     for i,n in enumerate(names): periods[f'{n}{octv}']=max(113,base[i]>>(octv-1))
 def u8(v): return 0 if v<0 else 255 if v>255 else v
-# Paula plays 8 bit samples as unsigned, so every waveform is centred on 128.
-# Writing the signed value straight out (or masking it with &255) puts the
-# whole sample near full scale and produces an audible DC step in the loop.
-def pcm_sine(n=128,amp=80): return bytes(u8(128+int(amp*math.sin(2*math.pi*i/n))) for i in range(n))
-def pcm_square(n=128,amp=70): return bytes(u8(128+amp if i<n//2 else 128-amp) for i in range(n))
-def pcm_kick(n=512):
+def pcm_bass(n=256):
+    # Rounded pulse/saw hybrid: more harmonics than the old square but loop-safe.
+    out=[]
+    for i in range(n):
+        ph=i/n
+        saw=2*ph-1
+        pulse=1.0 if ph < .38 else -1.0
+        v=.55*pulse+.45*saw
+        out.append(u8(128+int(68*v)))
+    return bytes(out)
+def pcm_lead(n=256):
+    # Bright but compact additive lead; integer-period partials make a seamless loop.
+    out=[]
+    for i in range(n):
+        ph=2*math.pi*i/n
+        v=math.sin(ph)+.34*math.sin(2*ph)+.18*math.sin(3*ph)+.08*math.sin(5*ph)
+        out.append(u8(128+int(62*v)))
+    return bytes(out)
+def pcm_kick(n=640):
     out=[]; ph=0.0
     for i in range(n):
-        t=i/n; ph+=2*math.pi*(90*(1-t)+25)/8000; out.append(u8(128+int(110*math.exp(-6*t)*math.sin(ph))))
+        t=i/n
+        hz=118*(1-t)**2+34
+        ph+=2*math.pi*hz/8000
+        body=math.sin(ph)+.18*math.sin(ph*.5)
+        click=(1-t*12) if t<1/12 else 0
+        out.append(u8(128+int(96*math.exp(-6.5*t)*body+20*click)))
     return bytes(out)
-def pcm_hat(n=256):
-    rng=random.Random(68000)
-    return bytes(u8(128+int(90*math.exp(-5*i/n)*rng.uniform(-1,1))) for i in range(n))
-samples=[('BASS',pcm_square()),('LEAD',pcm_sine()),('KICK',pcm_kick()),('HAT',pcm_hat())]
+def pcm_hat(n=320):
+    rng=random.Random(68000); out=[]
+    hp=0.0
+    for i in range(n):
+        t=i/n; x=rng.uniform(-1,1); y=x-hp*.78; hp=x
+        out.append(u8(128+int(78*math.exp(-6.2*t)*y)))
+    return bytes(out)
+samples=[('VECTOR BASS',pcm_bass()),('NEON LEAD',pcm_lead()),('KICK',pcm_kick()),('HAT',pcm_hat())]
 while len(samples)<31: samples.append(('',b''))
-header=bytearray(b'NEON VECTORS - OCS CRACKTRO'.ljust(20,b' ')[:20])
+header=bytearray(b'NEON VECTORS - NIGHT DRIVE'.ljust(20,b' ')[:20])
 for name,data in samples:
     if len(data)%2: data+=b'\0'
-    length=len(data)//2; vol=48 if name else 0; loop_len=length if name in ('BASS','LEAD') else 1
+    length=len(data)//2; vol=50 if name else 0; loop_len=length if name in ('VECTOR BASS','NEON LEAD') else 1
     header+=name.encode()[:22].ljust(22,b' ')+struct.pack('>HBBHH',length,0,vol,0,loop_len)
-header+=bytes([4,0])+bytes([0,1,2,3]+[0]*124)+b'M.K.'
+# Eight-pattern arc: establish -> drive -> lift -> peak -> break -> rebuild -> peak variation -> outro/loop.
+order=list(range(8))
+header+=bytes([len(order),0])+bytes(order+[0]*(128-len(order)))+b'M.K.'
 def ev(sample=0,note=None,fx=0,param=0):
     p=periods.get(note,0) if note else 0
     return bytes([(sample&0xf0)|((p>>8)&15),p&255,((sample&15)<<4)|(fx&15),param&255])
-patterns=[]; chords=[['A2','C3','E3'],['F2','A2','C3'],['C3','E3','G3'],['G2','B2','D3']]; bass=['A1','F1','C2','G1']
-for pat in range(4):
-    pb=bytearray()
+chords=[['A2','C3','E3'],['F2','A2','C3'],['C3','E3','G3'],['G2','B2','D3']]
+bass=['A1','F1','C2','G1']
+patterns=[]
+for pat in range(8):
+    pb=bytearray(); harm=pat & 3
     for row in range(64):
-        c1=ev(1,bass[pat]) if row%4==0 else ev(); c2=ev(2,chords[pat][(row//2)%3]) if row%2==0 else ev()
-        c3=ev(3,'C2') if row%8==0 else ev(); c4=ev(4,'C3') if row%4==2 else ev()
-        if pat==0 and row==0: c1=ev(1,bass[pat],0xF,6)
+        # Bass: offbeats and octave answers appear as the arrangement opens up.
+        c1=ev()
+        if row%4==0 and pat not in (4,): c1=ev(1,bass[harm])
+        if pat in (2,3,6) and row%8==6: c1=ev(1, bass[harm][0:-1] + str(min(4,int(bass[harm][-1])+1)))
+        if pat==4 and row%16==0: c1=ev(1,bass[harm],0xC,34)
+        # Lead: sparse intro/break, rolling triad in drive sections, little top-note hook at peaks.
+        c2=ev()
+        if pat in (0,4):
+            if row%8==0: c2=ev(2,chords[harm][(row//8)%3],0xC,38 if pat==4 else 44)
+        else:
+            if row%2==0: c2=ev(2,chords[harm][(row//2)%3])
+            if pat in (3,6) and row%16==14: c2=ev(2,'A3',0xC,56)
+        # Four-on-the-floor except the break; final two beats add a fill.
+        c3=ev()
+        if pat!=4 and row%8==0: c3=ev(3,'C2')
+        if pat in (3,6) and row>=56 and row%4==0: c3=ev(3,'C2',0xC,58)
+        # Hats evolve from offbeat to 16th drive; use volume accents supported by the compact player.
+        c4=ev()
+        hat_step=8 if pat==0 else (4 if pat in (1,4,7) else 2)
+        if row%hat_step==(hat_step//2): c4=ev(4,'C3',0xC,32 if row%8 else 44)
+        if pat==4 and row>=48 and row%4==2: c4=ev(4,'C3',0xC,24+(row-48))
+        if pat==0 and row==0: c1=ev(1,bass[harm],0xF,6)
         pb+=c1+c2+c3+c4
     patterns.append(pb)
 mod=header+b''.join(patterns)+b''.join(data+(b'\0' if len(data)%2 else b'') for _,data in samples)

@@ -1,6 +1,6 @@
 # UBER CRACKING SERVICE presents: NEON VECTORS
 
-A small, source-complete **PAL Motorola 68000 cracktro** for classic Amiga OCS/ECS hardware,
+A small, source-complete **PAL Motorola 68000 cracktro** for classic Amiga OCS/ECS and AGA hardware,
 written in assembly for [VASM](http://sun.hasenbraten.de/vasm/). It takes over the machine and
 shows a gradient logo, a **3D starfield**, a rotating **3D wireframe** (cube and octahedron drawn
 by the blitter) and a text scroller over Copper colour bars, while a four-channel tracker tune
@@ -30,6 +30,13 @@ bitplane memory while it runs on an emulated 68000. It is not a capture from a r
 - [Known limitations](#known-limitations)
 - [Documentation](#documentation)
 
+## AGA support
+
+The same executable now has a conservative **runtime AGA/Lisa path**. It probes `DENISEID` for Lisa (`$00F8`); OCS/ECS machines continue through the original path without touching AGA-only write registers. On AGA, `FMODE=0` deliberately keeps the proven 16-bit/OCS-compatible fetch timing and the display remains 320×256 with four bitplanes, while `BPLCON3.LOCT` supplies the low RGB nibbles for colours 0–15. The existing Copper continues to write the high RGB nibbles, producing a 24-bit-precision palette without changing Copper timing or bitplane bandwidth.
+
+This is intentionally **AGA-enhanced**, not an AGA-only 8-bitplane rewrite. That preserves A500/A600 compatibility and leaves DMA headroom for Paula, sprites, Copper and blitter effects. The validator mechanically checks the Lisa ID, guarded AGA paths, conservative `FMODE`, and restoration of `BPLCON3.LOCT=0` before legacy Copper colour writes.
+
+
 ## Features
 
 - PAL 320×256 low resolution, 4 bitplanes / 16 colours, Copper-driven display, with a different palette
@@ -46,7 +53,7 @@ bitplane memory while it runs on an emulated 68000. It is not a capture from a r
 - **Hardware sprite ball ring**: eight shaded balls orbit the wireframe on a tilted, spinning, wobbling 3D
   ring; they are depth-sorted onto the sprite channels, drawn at three sizes and brightnesses by
   distance, and the far ones pass behind the playfield (`BPLCON2`)
-- **3D starfield**: 64 stars flying out of the screen with perspective projection, in three depth
+- **3D starfield**: 48 stars flying out of the screen with perspective projection, in three depth
   brightnesses (far, mid, near) made from the free bitplane combinations
 - **3D wireframe**: a cube and a counter-rotating octahedron (24 edges), rotated with 7-bit fixed
   point matrices, perspective-projected, and drawn with the **blitter in line mode** into a
@@ -68,7 +75,7 @@ bitplane memory while it runs on an emulated 68000. It is not a capture from a r
 | --- | --- |
 | Build | GNU Make, Python 3.8+, [`vasmm68k_mot`](http://sun.hasenbraten.de/vasm/) |
 | Emulated run test (optional) | `pip install machine68k` |
-| Running | An emulator (FS-UAE, WinUAE, Amiberry) or a real PAL OCS/ECS Amiga, 512 KiB chip RAM, Kickstart 1.3 or later (or the AROS replacement ROM) |
+| Running | An emulator (FS-UAE, WinUAE, Amiberry) or a real PAL OCS/ECS/AGA Amiga, 512 KiB chip RAM, Kickstart 1.3 or later (or the AROS replacement ROM) |
 
 No Pillow, host fonts or other Python packages are needed to build.
 
@@ -97,6 +104,7 @@ separate link step. Other targets:
 | --- | --- |
 | `make assets` | Regenerate `logo.raw`, `font.raw`, `neon.mod`, `logo_preview.png` |
 | `make validate` | Asset checks and static source checks (runs automatically before assembly) |
+| `make doctor` | Non-mutating host/toolchain readiness report; optional dependencies are reported as SKIP |
 | `make verify-repro` | Generate the assets twice and require identical SHA-256 hashes |
 | `make mutants` | Self-test of the validator: inject 33 faults, require each to be reported |
 | `make emutest` | Run the assembled program on an emulated 68000 and check its behaviour |
@@ -263,6 +271,10 @@ MANIFEST.sha256     SHA-256 of every shipped file
 
 After a change run `make && make emutest`; run `make release` to refresh the manifest.
 
+## Experimental renderer status
+
+The release intentionally ships only the validated wireframe renderer. Earlier Phase 2C/3/4 solid-renderer prototypes were internally inconsistent and have been quarantined rather than advertised as features. The corrected contracts and reintegration gates are in [`docs/EXPERIMENTAL_3D.md`](docs/EXPERIMENTAL_3D.md). Historical planning/reports are retained under `docs/legacy/` for provenance only and are not statements of current capability.
+
 ## Known limitations
 
 - **PAL only.** It is timed for a 50 Hz PAL frame. On NTSC it will not hang (the frame sync ends
@@ -287,3 +299,8 @@ After a change run `make && make emutest`; run `make release` to refresh the man
 | [`docs/VALIDATION.md`](docs/VALIDATION.md) | What each check enforces and why |
 | [`docs/BUILD_AND_TEST.md`](docs/BUILD_AND_TEST.md) | Build, test matrix and the emulator/hardware acceptance checklist |
 | [`RELEASE_NOTES.md`](RELEASE_NOTES.md) | Change history |
+
+
+## v4 presentation pass
+
+The presentation layer now has a deliberate musical arc rather than an unchanging loop. The generated MOD contains eight arranged patterns with intro, drive, lift, peak, break, rebuild and variation sections; its bass/lead/kick/hat samples were redesigned while preserving the compact replay contract. A three-frame Copper pulse is locked to the 48-frame driving downbeat. The procedural 16-colour logo also has a revised neon/steel palette and corner-chevron framing, with all artwork still generated deterministically from source.

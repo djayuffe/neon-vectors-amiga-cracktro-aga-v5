@@ -104,9 +104,40 @@ for rel in ('src/main.s','src/modplayer.s'):
               f'{rel}:{n}: unexpected PC-relative operand: {code}')
 
 
+# --- AGA fallback contract ---------------------------------------------------
+# AGA is an optional enhancement. The base display must remain valid OCS/ECS,
+# and every AGA-only write must stay behind the Lisa capability flag.
+hw_src=(ROOT/'src/hardware.i').read_text()
+check('DENISEID_LISA EQU $00F8' in hw_src, 'AGA Lisa DENISEID must remain $00F8')
+check('AGA_FMODE_OCS EQU $0000' in hw_src, 'AGA FMODE must remain conservative OCS-compatible fetch mode 0')
+check('BPLCON3_LOCT  EQU $0200' in hw_src, 'AGA BPLCON3 LOCT bit must remain $0200')
+aga_block=re.search(r'(?ms)^DetectAGA:.*?^; ---------------------------------------------------------------------------\n; Chip memory\.', (ROOT/'src/main.s').read_text())
+if aga_block:
+    ab=aga_block.group(0)
+    check('cmpi.w  #DENISEID_LISA,DENISEID(a6)' in ab, 'AGA detection must compare DENISEID against Lisa ID')
+    check(ab.count('tst.b   aga_enabled') >= 2, 'AGA-only init/palette paths must be capability guarded')
+    check(re.search(r'(?ms)^UpdateAGAPalette:.*move\.w\s+#BPLCON3_LOCT,BPLCON3\(a6\).*dbra\s+d7,\.loop\s*\n\s*clr\.w\s+BPLCON3\(a6\)', ab) is not None,
+          'AGA palette path must select LOCT then restore high-nibble mode')
+    check('move.w  #AGA_FMODE_OCS,FMODE(a6)' in ab, 'AGA init must explicitly select conservative FMODE')
+else:
+    check(False, 'missing AGA capability block')
+
 # Structural DMA-memory contract: Copper and all DMA payload labels must occur
 # after the chipdata section declaration in the single source translation unit.
 main_src=(ROOT/'src/main.s').read_text()
+# Production/experimental boundary. Prototype renderer symbols once lived in
+# main.s and could silently rot while appearing to be shipping functionality.
+for forbidden in ('UpdateShading:', 'UpdateOctahedronShading:', 'UpdateSphereShading:',
+                  'UpdateParticles:', 'SortFaces:', 'DrawSolid:', 'cube_faces:',
+                  'octahedron_faces:', 'sphere_verts:', 'particles:'):
+    check(forbidden not in main_src, f'experimental symbol leaked into production main.s: {forbidden[:-1]}')
+exp_src=(ROOT/'src/phase2c_drawsolid.s').read_text()
+check('DrawSolid:' not in exp_src, 'quarantined experimental module must not export callable DrawSolid')
+check('CUBE_FACE_BYTES EQU 8' in exp_src, 'experimental cube face record contract must remain 8 bytes')
+check('OCTA_FACE_BYTES EQU 7' in exp_src, 'experimental octahedron face record contract must remain 7 bytes')
+check(not re.search(r'(?mi)^\s*include\s+[\"\'](?:src/)?phase2c_drawsolid\.s[\"\']', main_src),
+      'production main.s must not include the experimental renderer')
+
 chip_pos=main_src.find('section chipdata,data_c')
 check(chip_pos>=0,'missing chipdata,data_c section')
 for label in ('copper:','screen:','logo_data:','font_data:','audio_silence:','mod_data:'):
@@ -442,6 +473,21 @@ if logo_cols:
     for ch in (32,33,65,77,86):
         cell=font[ch*8:ch*8+8]
         check(any(cell),f'font glyph {ch} is blank')
+
+# --- shipping renderer integrity ---------------------------------------------
+# Historical Phase 2C/3/4 experiments are intentionally retained as reference
+# data/routines, but must not be called from DrawWire until they satisfy the
+# real blitter/bitplane ABI. This guard prevents another partial integration.
+dw=re.search(r'(?ms)^DrawWire:\n(.*?)(?=^; \(d0\.w \* d1\.w\)|^Mul7:)', main_src)
+check(bool(dw), 'DrawWire routine not found')
+if dw:
+    active=dw.group(1)
+    for experimental in ('UpdateShading','UpdateOctahedronShading','UpdateSphereShading','UpdateParticles','SortFaces','DrawSolid'):
+        check(not re.search(r'\bbsr\s+'+experimental+r'\b',active),
+              f'experimental {experimental} was re-enabled in DrawWire without production renderer validation')
+check(equvals.get('NSTARS')==48, 'NSTARS/documented verified starfield count drifted from 48')
+check(equvals.get('SCREEN_LONGS') is None or 'PLANE_LONGS*6' in main_src,
+      'screen storage must retain six plane-sized buffers for four displayed planes with two double-buffered planes')
 
 if errors:
     print('STATIC SOURCE VALIDATION FAILED')

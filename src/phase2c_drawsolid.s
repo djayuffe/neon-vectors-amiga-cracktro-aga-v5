@@ -1,36 +1,34 @@
-; ═════════════════════════════════════════════════════════════════════════════
-; PHASE 2C: Blitter Area-Fill Polygon Rendering for Shaded Faces
-; ═════════════════════════════════════════════════════════════════════════════
-; 
-; Complete DrawSolid implementation: render shaded cube faces using blitter
-; area-fill. Each face is drawn as a filled quad with colour selected from
-; an 8-level brightness ramp.
+; NEON VECTORS — experimental solid renderer research module
+; ----------------------------------------------------------
+; NOT included by src/main.s and NOT part of the release binary.
 ;
-; Algorithm:
-;   1. For each face:
-;      a. Get shading value (0-7) from shading_lookup[]
-;      b. Calculate colour = palette_base + shading
-;      c. Draw filled quad using blitter area-fill
-;      d. Use scanline rasterizer (CPU) for edge tracing
+; This file preserves the next renderer direction without pretending that an
+; outline is a filled/Gouraud polygon renderer.  It documents the ABI and data
+; layout that a future implementation must satisfy before integration.
 ;
-; Performance: ~4000 cycles per frame for 6 faces (2.8% budget)
-; ═════════════════════════════════════════════════════════════════════════════
-
-; ---- Colour mapping: Palette base per object ----
-; cube_shading = 24..31 (8 colours for 0-7 shading)
-CUBE_COLOUR_BASE EQU 24
-
-; ---- Scanline polygon fill for one face (quad) ----
-; in: d0-d3 = x0,y0,x1,y1 (quad vertices on screen)
-;     a0 = screen bitplane
-;     d6 = shading (0-7)
-;     a6 = CUSTOM
-; Fill a quadrilateral face using blitter
-; Simplified: assume convex quad, fill scanline by scanline
-
-DrawQuad:
-        ; d0/d1/d2/d3 contain x0,y0,x1,y1 (first two vertices)
-        ; We need all 4 vertices, but for now draw simple outline
-        ; Future: full scanline area-fill implementation
-        rts
-
+; Production BlitLine ABI (src/main.s):
+;   d0=x1, d1=y1, d2=x2, d3=y2, a0=destination plane, a6=CUSTOM
+;   caller presets BLTCMOD, BLTDMOD, BLTADAT, BLTBDAT, BLTAFWM, BLTALWM.
+;
+; Face record contracts used by the abandoned prototype:
+CUBE_FACE_BYTES EQU 8      ; nx.b,ny.b,nz.b,v0.b,v1.b,v2.b,v3.b,material.b
+OCTA_FACE_BYTES EQU 7      ; nx.b,ny.b,nz.b,v0.b,v1.b,v2.b,material.b
+;
+; OCS display contract:
+;   BPLCON0=$4200 => four displayed bitplanes => palette indices 0..15 only.
+;   A future solid renderer must either draw a 4-bit index into all required
+;   planes or reserve a subset of planes/colours. Values 16..31 are impossible
+;   without changing the display mode to five bitplanes.
+;
+; Required integration stages (none are falsely exported here):
+;   1. transform face normals with the same object matrix as the vertices;
+;   2. back-face cull in a documented winding convention;
+;   3. clip polygons/edges to the MID band before any blitter address math;
+;   4. depth-order intersecting objects or use a visibility-safe alternative;
+;   5. implement actual polygon fill (edge draw + area fill or span fill);
+;   6. map lighting to legal 0..15 palette indices / bitplane masks;
+;   7. prove blitter ownership/waits and hidden-buffer-only writes;
+;   8. add emulator-visible golden-frame or framebuffer invariants.
+;
+; This deliberately contains no callable DrawSolid symbol.  An unfinished
+; renderer therefore cannot be linked accidentally by adding this file to SRCS.

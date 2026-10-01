@@ -1,3 +1,5 @@
+> **Historical/experimental document.** This is not the shipping renderer status. See `docs/EXPERIMENTAL_3D.md` for the audited current status.
+
 # Phase 2 Implementation Summary: Gouraud-Shaded 3D Objects
 
 ## Completion Status: ✅ FRAMEWORK COMPLETE (Phase 2A)

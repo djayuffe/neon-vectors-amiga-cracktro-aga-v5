@@ -1,4 +1,30 @@
+# v4 — presentation / art / music pass
+
+- Expanded the deterministic ProTracker soundtrack from 4 to 8 arranged patterns.
+- Added intro, drive, lift, peak, break, rebuild, peak-variation and loop/outro flow.
+- Rebuilt bass and lead samples for richer harmonic content and seamless loops.
+- Reworked kick and hat synthesis; added supported `Cxx` accents and pattern fills.
+- Added a 48-frame PAL downbeat-synchronised Copper raster pulse.
+- Refined the procedural OCS logo palette and added symmetric neon frame chevrons.
+- Expanded the scroller copy to call out the beat-synchronised effect.
+- Kept all changes within the existing 4-bitplane/16-colour OCS architecture and deterministic asset pipeline.
+
 # Release notes
+
+## 2026-10-01 hardening / renderer-boundary revision
+
+- Removed disconnected Phase 2C/3/4 prototype routines and unused object/particle tables from the production `main.s`; the shipping renderer is now unambiguously the validated double-buffered wireframe path.
+- Quarantined the solid-renderer research in `src/phase2c_drawsolid.s` with corrected 8-byte cube and 7-byte octahedron face contracts, the real `BlitLine` ABI, and the four-bitplane/16-colour constraint.
+- Added validator guards that prevent experimental symbols or an accidental experimental include from leaking back into production.
+- Added `make doctor` for a fast host/toolchain readiness report with honest PASS/FAIL/SKIP states.
+- Re-ran the static validator, deterministic asset reproduction, and all 33 validator mutations successfully.
+- Archived superseded AGA/solid-renderer reports under `docs/legacy/`; they are provenance, not current feature claims.
+- VASM and `machine68k` are unavailable in this audit environment, so assembly/Hunk and execution-harness checks remain explicitly unverified here.
+
+## Historical release notes
+
+The entries below describe earlier snapshots. Counts/status statements are historical and can differ from the current tree.
+
 
 ## Effects revision
 
@@ -89,3 +115,8 @@ hardware (checklist in `docs/BUILD_AND_TEST.md`).
 Earlier revisions (per-project history before this repository) introduced the generated assets,
 the validator, the reproducibility check, the VASM bootstrap and the Hunk parser. Their changelog
 entries claimed fixes that were not in the code or were wrong; those claims have been dropped.
+
+### Hardened v3
+- Added `tools/verify_manifest.py`: verifies every release hash, rejects missing entries, duplicate entries, and files shipped without manifest coverage.
+- `COMPREHENSIVE_TEST.sh` now treats release-manifest integrity as a first-class test.
+- Added `make verify-manifest` for CI/release use.

@@ -16,7 +16,8 @@ CUSTOM      EQU $DFF000
 
 DMACONR     EQU $002       ; read: active DMA, write: same bits as DMACON (CLR)
 VPOSR       EQU $004       ; bit15 LOF, bit0 V8
-VHPOSR      EQU $006       ; bits15-8 V7..V0, bits7-0 H8..H1
+VHPOSR      EQU $006       ; raster beam position
+DENISEID    EQU $07C       ; ECS Denise / AGA Lisa identification (read only)
 ADKCONR     EQU $010
 INTENAR     EQU $01C
 INTREQR     EQU $01E
@@ -70,6 +71,9 @@ BPL6PTL     EQU $0F6
 BPLCON0     EQU $100
 BPLCON1     EQU $102
 BPLCON2     EQU $104
+BPLCON3     EQU $106       ; AGA/ECS extended bitplane control; AGA palette bank/LOCT
+BPLCON4     EQU $10C       ; AGA bitplane/sprite palette control
+FMODE       EQU $1FC       ; AGA fetch/sprite mode
 BPL1MOD     EQU $108
 BPL2MOD     EQU $10A
 SPR0PTH     EQU $120
@@ -169,3 +173,9 @@ MEMF_CLEAR EQU $00010000
 ; AmigaDOS return codes.
 RETURN_OK   EQU 0
 RETURN_FAIL EQU 20
+
+; AGA/Lisa. Lisa returns $F8 in the high byte family through DENISEID.
+; We compare the complete documented ID value used by classic AGA detection.
+DENISEID_LISA EQU $00F8
+BPLCON3_LOCT  EQU $0200    ; 1 = COLORxx writes low RGB nibbles on AGA
+AGA_FMODE_OCS EQU $0000    ; conservative 16-bit fetch / OCS-compatible DMA width

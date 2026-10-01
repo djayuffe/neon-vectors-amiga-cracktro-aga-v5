@@ -119,6 +119,17 @@ results.append(M_('CopyMem LVO wrong', 'src/hardware.i',
     'LVO_CopyMem       EQU -624', 'LVO_CopyMem       EQU -618', 'memory/copy/scheduling'))
 results.append(M_('Forbid LVO wrong', 'src/hardware.i',
     'LVO_Forbid        EQU -132', 'LVO_Forbid        EQU -130', 'memory/copy/scheduling'))
+results.append(M_('AGA Lisa ID wrong', 'src/hardware.i',
+    'DENISEID_LISA EQU $00F8', 'DENISEID_LISA EQU $00FC', 'Lisa DENISEID'))
+results.append(M_('AGA wide fetch accidentally enabled', 'src/hardware.i',
+    'AGA_FMODE_OCS EQU $0000', 'AGA_FMODE_OCS EQU $0003', 'FMODE'))
+results.append(M_('AGA palette guard removed', 'src/main.s',
+    'UpdateAGAPalette:\n        tst.b   aga_enabled', 'UpdateAGAPalette:\n        nop', 'capability guarded'))
+results.append(M_('AGA LOCT not restored', 'src/main.s',
+    '        clr.w   BPLCON3(a6)                ; restore high-nibble mode for Copper',
+    '        nop                                ; broken: leaves LOCT selected', 'restore high-nibble'))
+results.append(M_('AGA detection compares ECS ID', 'src/main.s',
+    'cmpi.w  #DENISEID_LISA,DENISEID(a6)', 'cmpi.w  #$00FC,DENISEID(a6)', 'Lisa ID'))
 results = [r for r in results if r is not None]
 print()
 print(f'mutations caught: {sum(1 for r in results if r)}/{len(results)}')

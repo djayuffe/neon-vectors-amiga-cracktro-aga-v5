@@ -111,9 +111,9 @@ instead of hanging with interrupts disabled.
 
 ## Display
 
-- 320×256 low resolution PAL, three bitplanes, 40 bytes per line; 21 words fetched per line with
+- 320×256 low resolution PAL, four displayed bitplanes, 40 bytes per line; 21 words fetched per line with
   modulo −2 and planes starting one word early (for the per-row `BPLCON1` scroll)
-- Plane 0: logo, mid stars, scroller; plane 1: wireframe (double-buffered); plane 2: far/near stars
+- Plane 0: logo, mid stars, scroller; plane 1: wireframe (double-buffered); plane 2: far/near stars; plane 3: the fourth logo/object plane (double-buffered)
 - Copper-programmed DIW/DDF, bitplane pointers, palette, and per-row colour and scroll changes
 
 ## Constraints

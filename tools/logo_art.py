@@ -19,8 +19,8 @@ import math
 W, H = 320, 64
 SS = 3                       # supersampling per axis
 
-PALETTE = [0x001, 0x100, 0x631, 0x963, 0xFC4, 0xFE9, 0xFFC, 0xFFF,
-           0x424, 0x212, 0x246, 0x468, 0x6AC, 0xADF, 0xD42, 0xFFF]
+PALETTE = [0x001, 0x101, 0x521, 0x853, 0xFC4, 0xFE8, 0xFFD, 0xFFF,
+           0x414, 0x212, 0x135, 0x258, 0x49B, 0x9DF, 0xF24, 0xFFF]
 
 # ---- 5x7 glyphs (only the letters this logo needs) -------------------------------------------
 GLYPHS = {
@@ -195,6 +195,17 @@ def build():
         img[62][x] = 14
         if img[2][x] == 0:
             img[2][x] = 9
+    # Small neon corner chevrons give the frame a more deliberate demo-scene silhouette.
+    for side in (-1, 1):
+        ox = 8 if side < 0 else W - 9
+        for k in range(3):
+            yy = 5 + k * 4
+            for t in range(5):
+                xx = ox + side * t
+                y1 = yy + t // 2
+                if 0 <= xx < W and 0 <= y1 < H and img[y1][xx] == 0:
+                    img[y1][xx] = 13 if k == 1 else 14
+
     for (sx, sy) in ((int(x0) - 3, 12), (int(x0 + total) + 2, 30), (W // 2 + 10, 4)):
         for dx, dy in ((0, 0), (1, 0), (-1, 0), (0, 1), (0, -1)):
             if 0 <= sx + dx < W and 0 <= sy + dy < H:

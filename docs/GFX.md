@@ -1,6 +1,6 @@
 # Graphics
 
-PAL low-resolution 320×256, **three bitplanes** (eight colours), driven by a Copper list that
+PAL low-resolution 320×256, **four bitplanes** (16 colours), driven by a Copper list that
 also does the colour work: gradients per raster line, the depth shades of the starfield and the
 animated bar under the logo.
 
@@ -19,8 +19,7 @@ rows 212 and up (display lines above 255).
 
 ## Bitplanes and colour
 
-The chip block holds four plane-sized buffers: plane 0, **wireframe buffer 0**, **wireframe
-buffer 1**, plane 2. The display's plane 1 is whichever wireframe buffer is currently in front.
+The chip block holds six plane-sized buffers: plane 0, **plane-1 buffer 0**, **plane-1 buffer 1**, plane 2, **plane-3 buffer 0**, and **plane-3 buffer 1**. Planes 1 and 3 are double-buffered together; the verified wireframe renderer currently draws into plane 1, while plane 3 supplies the fourth logo bitplane and is reserved for future object work.
 
 | Plane 0 | Plane 1 | Plane 2 | Colour index | Used for |
 | :-: | :-: | :-: | :-: | --- |
@@ -122,7 +121,7 @@ beam gets there, so it is single-buffered.
 
 ## Copper
 
-The list sets display fetch/window registers, `BPLCON0` (three planes), the six pointer pairs
+The list sets display fetch/window registers, `BPLCON0` (three planes), the four bitplane pointer pairs
 (`PatchCopper` rewrites the **data** words at offsets 2/6, 10/14 and 18/22 from `cop_bpl1` every
 frame, because plane 1 alternates), the static palette, and then the per-row entries described above:
 64 wave rows, a mid-band glow, the scroller strip and 34 bar rows (`tools/gen_tables.py copper`
@@ -135,3 +134,7 @@ and compares them with independent Python reference models: the logo bitmap, eve
 and depth class, every scroller pixel, the wave and bar rows, and — on **every** frame — the whole displayed wireframe
 buffer against the reference projection and a reference Bresenham. The blitter's line mode itself
 was confirmed on real (emulated) hardware by running the program in FS-UAE.
+
+## v4 presentation polish
+
+The logo remains a deterministic 320x64, four-bitplane asset. v4 retunes its gold/neon/steel palette and adds symmetric corner chevrons without increasing bitplane count or horizontal extent. The runtime adds a three-frame raster-line pulse every 48 PAL frames, matching the generated soundtrack's driving kick period. This is intentionally a local Copper colour event rather than a full-screen flash, preserving readability of the logo, stars, wireframe, sprites and scroller.

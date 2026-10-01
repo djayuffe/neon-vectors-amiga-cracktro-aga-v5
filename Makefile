@@ -29,6 +29,9 @@ $(CHECKED): $(STAMP) $(SRCS) tools/validate.py | build
 
 validate: $(CHECKED)
 
+doctor:
+	$(PYTHON) tools/doctor.py
+
 # Proves the validator can fail: injects known faults and requires each to be
 # reported. Not part of "all", because it copies the tree and re-runs the
 # validator dozens of times.
@@ -37,6 +40,9 @@ mutants:
 
 verify-repro:
 	$(PYTHON) tools/verify_repro.py
+
+verify-manifest:
+	$(PYTHON) tools/verify_manifest.py
 
 # Runs the assembled program on an emulated 68000 (needs: pip install machine68k).
 # Uses its own symbol-carrying build, so it does not depend on "make".
@@ -77,4 +83,4 @@ distclean: clean
 
 release: clean all verify-repro manifest
 
-.PHONY: all assets validate mutants verify-repro emutest emu-mutants manifest toolchain hunkcheck clean distclean release
+.PHONY: all assets validate doctor mutants verify-repro verify-manifest emutest emu-mutants manifest toolchain hunkcheck clean distclean release

@@ -1,3 +1,5 @@
+> **Historical/experimental document.** This is not the shipping renderer status. See `docs/EXPERIMENTAL_3D.md` for the audited current status.
+
 # Complete Implementation Plan: Phases 2C, 3, 4
 
 **Status**: Framework design + roadmap (Phase 2C partial implementation)  

@@ -4,7 +4,7 @@ SCREEN_W_BYTES  EQU 40
 SCREEN_H        EQU 256
 PLANE_SIZE      EQU SCREEN_W_BYTES*SCREEN_H
 PLANE_LONGS     EQU PLANE_SIZE/4
-SCREEN_LONGS    EQU PLANE_LONGS*6   ; 6 planes for 64-colour AGA
+SCREEN_LONGS    EQU PLANE_LONGS*6   ; 4 displayed planes; planes 1 and 3 each have two buffers
 CHIPDATA_SIZE   EQU chipdata_end-chipdata_begin
 FRAME_SYNC_LINE EQU 300     ; first line below the display window (DIWSTOP = line 300)
 SILENCE_WORD    EQU $8080   ; 8 bit Paula silence is unsigned $80, not 0
@@ -108,6 +108,7 @@ _start:
         move.w  DMACONR(a6),old_dmacon
         move.w  INTENAR(a6),old_intena
         move.w  ADKCONR(a6),old_adkcon
+        bsr     DetectAGA                  ; read-only probe; sets aga_enabled
 
 ; --- take the chipset away from the operating system -----------------------
 ; Forbid() first, so no task switch can happen between Forbid and Disable.
@@ -121,6 +122,7 @@ _start:
         move.w  #DMAF_ALL,DMACON(a6)       ; stop all DMA
         move.w  #$7FFF,ADKCON(a6)          ; clear every ADKCON bit: no UART/disk mods
 
+        bsr     InitAGA                    ; no-op on OCS/ECS; conservative AGA setup
         bsr     ClearScreen
         bsr     DrawLogo
         bsr     InitStars
@@ -148,6 +150,7 @@ _start:
         bsr     UpdateBars
         bsr     UpdateSprites              ; also before the beam reaches the ring
         bsr     UpdateRaster
+        bsr     UpdateAGAPalette           ; low RGB nibbles only on Lisa/AGA
         bsr     UpdateStars
         bsr     UpdateScroller
         bsr     MOD_Tick                   ; (timing-critical drawing first: the tick may wait on the blitter-free Paula setup)
@@ -227,6 +230,51 @@ _start:
         jsr     LVO_CloseLibrary(a6)
         movem.l (sp)+,d0-d7/a0-a6
         moveq   #RETURN_FAIL,d0
+        rts
+
+
+; ---------------------------------------------------------------------------
+; AGA capability and palette support.
+;
+; The production renderer intentionally remains 320x256x4.  On Lisa/AGA we
+; retain OCS-compatible 16-bit fetches (FMODE=0), but use the second COLORxx
+; write bank selected by BPLCON3.LOCT to supply the low four RGB bits.  The
+; existing Copper continues to write the high RGB nibbles, so the same list is
+; valid on OCS/ECS and becomes a true 24-bit palette on AGA.
+;
+; Crucial invariant: BPLCON3 is returned to LOCT=0 before the Copper can run.
+; Otherwise every legacy COLORxx Copper move would update the low nibbles.
+; ---------------------------------------------------------------------------
+DetectAGA:
+        clr.b   aga_enabled
+        cmpi.w  #DENISEID_LISA,DENISEID(a6)
+        bne     .no
+        move.b  #1,aga_enabled
+.no:
+        rts
+
+InitAGA:
+        tst.b   aga_enabled
+        beq     .done
+        move.w  #AGA_FMODE_OCS,FMODE(a6)
+        clr.w   BPLCON4(a6)
+        clr.w   BPLCON3(a6)
+        bsr     UpdateAGAPalette
+.done:
+        rts
+
+UpdateAGAPalette:
+        tst.b   aga_enabled
+        beq     .done
+        move.w  #BPLCON3_LOCT,BPLCON3(a6)
+        lea     aga_palette_low,a0
+        lea     COLOR00(a6),a1
+        moveq   #15,d7
+.loop:
+        move.w  (a0)+,(a1)+
+        dbra    d7,.loop
+        clr.w   BPLCON3(a6)                ; restore high-nibble mode for Copper
+.done:
         rts
 
 ; ---------------------------------------------------------------------------
@@ -504,6 +552,19 @@ UpdateRaster:
         lea     raster_colors,a0
         add.w   d0,d0
         move.w  0(a0,d0.w),d1
+; Musical pulse: the generated tune is speed 6 with the kick on every eighth row,
+; i.e. a 48-frame downbeat at PAL 50 Hz. For the first three frames of that beat,
+; override the raster-band colour with a short white/cyan decay. This is deliberately
+; confined to the line-$80 Copper slot: it adds impact without flashing the whole screen.
+        move.w  frame_no,d2
+        divu    #48,d2
+        swap    d2                          ; remainder 0..47
+        cmp.w   #3,d2
+        bhs     .no_beat
+        lea     beat_raster_colors,a0
+        add.w   d2,d2
+        move.w  0(a0,d2.w),d1
+.no_beat:
         move.l  ptr_raster,a1
         move.w  d1,2(a1)
         rts
@@ -999,221 +1060,9 @@ BlitWait:                                  ; a6 = CUSTOM
         bne     .w
         rts
 
-; ---------------------------------------------------------------------------
-; PHASE 2: Gouraud-Shaded Solid 3D Objects (UpdateShading)
-;
-; For each face normal, calculate dot product with light direction after
-; transformation by rotation matrix. Result (0-7) stored in shading_lookup.
-; Called once per frame after rotation angles change, before DrawWire.
-; ---------------------------------------------------------------------------
-UpdateShading:
-        lea     cube_faces,a0              ; face normals (nx, ny, nz)
-        lea     shading_lookup,a1          ; output shading values
-        moveq   #6-1,d7                    ; 6 faces
-
-.face_loop:
-        ; Load face normal (8-bit fixed, -128..127 ≈ -1..1)
-        move.b  0(a0),d0                   ; nx
-        move.b  1(a0),d1                   ; ny
-        move.b  2(a0),d2                   ; nz
-
-        ; Calculate dot product with light direction: (-64, -90, 64)
-        ; lum = max(0, nx*(-64) + ny*(-90) + nz*64)
-        moveq   #0,d3                      ; accumulator
-
-        ext.w   d0
-        muls    #-64,d0
-        add.l   d0,d3
-
-        ext.w   d1
-        muls    #-90,d1
-        add.l   d1,d3
-
-        ext.w   d2
-        muls    #64,d2
-        add.l   d2,d3
-
-        ; Clamp and scale to 0..7: lum >> 8, then min(7, max(0, result))
-        tst.l   d3
-        ble     .dark
-        asr.l   #8,d3                      ; divide by 256
-        cmp.w   #7,d3
-        ble     .norm_shade
-        moveq   #7,d3
-        bra     .norm_shade
-.dark:
-        moveq   #0,d3
-
-.norm_shade:
-        move.b  d3,0(a1)                   ; store shading value for this face
-
-        lea     10(a0),a0                  ; next face (10 bytes: 3 norm + 4 vert + 1 colour + 2 pad)
-        lea     1(a1),a1                   ; next shading slot
-        dbra    d7,.face_loop
-        rts
-
-; ---------------------------------------------------------------------------
-; PHASE 3: UpdateOctahedronShading - Per-face lighting for octahedron
-; ---------------------------------------------------------------------------
-UpdateOctahedronShading:
-        lea     octahedron_faces,a0        ; face normals
-        lea     octahedron_shading,a1      ; output shading values
-        moveq   #8-1,d7                    ; 8 faces
-
-.octa_face:
-        ; Load face normal (8-bit fixed, -128..127)
-        move.b  0(a0),d0                   ; nx
-        move.b  1(a0),d1                   ; ny
-        move.b  2(a0),d2                   ; nz
-
-        ; Calculate dot product with light
-        moveq   #0,d3
-        ext.w   d0
-        muls    #-64,d0
-        add.l   d0,d3
-        ext.w   d1
-        muls    #-90,d1
-        add.l   d1,d3
-        ext.w   d2
-        muls    #64,d2
-        add.l   d2,d3
-
-        ; Clamp to 0..7
-        tst.l   d3
-        ble     .octa_dark
-        asr.l   #8,d3
-        cmp.w   #7,d3
-        ble     .octa_store
-        moveq   #7,d3
-        bra     .octa_store
-.octa_dark:
-        moveq   #0,d3
-.octa_store:
-        move.b  d3,0(a1)
-
-        lea     10(a0),a0                  ; next face
-        lea     1(a1),a1
-        dbra    d7,.octa_face
-        rts
-
-; ---------------------------------------------------------------------------
-; PHASE 3: UpdateSphereShading - Procedural sphere vertex lighting
-; ---------------------------------------------------------------------------
-UpdateSphereShading:
-        ; Simplified: directly shade based on vertex Y coordinate
-        lea     sphere_verts,a0
-        lea     sphere_shading,a1
-        moveq   #64-1,d7
-
-.sphere_vertex:
-        ; Get Y coordinate and map to brightness
-        move.w  2(a0),d0                   ; y (skip x at 0, use y at 2)
-        ; Simple mapping: Y in -28..28, map to 0..7
-        addi.w  #28,d0
-        mulu    #7,d0
-        divu    #56,d0
-        move.b  d0,0(a1)
-
-        lea     6(a0),a0                   ; next vertex (3 words)
-        lea     1(a1),a1
-        dbra    d7,.sphere_vertex
-        rts
-
-; ---------------------------------------------------------------------------
-; PHASE 4: UpdateParticles - Animate particle system
-; ---------------------------------------------------------------------------
-UpdateParticles:
-        lea     particles,a0
-        moveq   #32-1,d7
-
-.particle:
-        move.w  0(a0),d0                   ; x
-        move.w  2(a0),d1                   ; vx
-        add.w   d1,d0
-        move.w  d0,0(a0)                   ; update x
-
-        move.w  4(a0),d2                   ; y
-        move.w  6(a0),d3                   ; vy
-        add.w   d3,d2
-        move.w  d2,4(a0)                   ; update y
-
-        move.b  8(a0),d4                   ; life
-        subq.b  #1,d4
-        move.b  d4,8(a0)
-
-        lea     10(a0),a0
-        dbra    d7,.particle
-        rts
-
-; ---------------------------------------------------------------------------
-; PHASE 4: SortFaces - Painters algorithm for multi-object rendering
-; ---------------------------------------------------------------------------
-SortFaces:
-        ; Simplified: Use back-to-front drawing order
-        ; Cube first (nearest), octahedron, sphere last
-        ; No actual sorting needed with static object order
-        rts
-
-; ---------------------------------------------------------------------------
-; PHASE 2C: DrawSolid - Render shaded cube faces
-;
-; Draws shaded 3D cube faces by drawing each quad as 4 edges via BlitLine.
-; Each edge is drawn in a colour mapped from shading value (0-7).
-; in: cube_faces, shading_lookup[], proj[]
-; a6 = CUSTOM, a0 = screen buffer
-; clobbers: d0-d6, a0-a5
-; ---------------------------------------------------------------------------
-DrawSolid:
-        lea     cube_faces,a3              ; face definitions
-        lea     shading_lookup,a4          ; shading values
-        lea     proj,a5                    ; projected vertices
-
-        moveq   #6-1,d7                    ; 6 cube faces
-
-.solid_face:
-        ; Get shading value (0-7) → colour = CUBE_COLOUR_BASE + shading
-        moveq   #0,d6
-        move.b  0(a4),d6                   ; face shading 0..7
-        addi.w  #24,d6                     ; + palette base (colours 24-31)
-
-        ; Draw four edges of the quad face
-        move.b  3(a3),d0                   ; v0 index
-        move.b  4(a3),d1                   ; v1 index
-        bsr     .draw_edge                 ; edge v0-v1
-
-        move.b  4(a3),d0                   ; v1 index
-        move.b  5(a3),d1                   ; v2 index
-        bsr     .draw_edge                 ; edge v1-v2
-
-        move.b  5(a3),d0                   ; v2 index
-        move.b  6(a3),d1                   ; v3 index
-        bsr     .draw_edge                 ; edge v2-v3
-
-        move.b  6(a3),d0                   ; v3 index
-        move.b  3(a3),d1                   ; v0 index
-        bsr     .draw_edge                 ; edge v3-v0
-
-        lea     10(a3),a3                  ; next face
-        lea     1(a4),a4                   ; next shading
-        dbra    d7,.solid_face
-        rts
-
-.draw_edge:
-        ; Draw edge from proj[d0] to proj[d1] in colour d6
-        ; in: d0, d1 = vertex indices, d6 = colour, a5 = proj[], a6 = CUSTOM, a0 = screen
-        lsl.w   #2,d0
-        move.w  0(a5,d0.w),d2              ; v0.x
-        move.w  2(a5,d0.w),d3              ; v0.y
-        lsr.w   #2,d0
-
-        move.b  d1,d4
-        lsl.w   #2,d4
-        move.w  0(a5,d4.w),d4              ; v1.x  (v1 screen x)
-        move.w  2(a5,d4.w),d5              ; v1.y
-
-        ; Call BlitLine (uses d2,d3,d4,d5 as x0,y0,x1,y1)
-        bsr     BlitLine
-        rts
+; Experimental solid/shaded rendering is intentionally kept out of the shipping
+; translation unit. See src/phase2c_drawsolid.s and docs/EXPERIMENTAL_3D.md.
+; The production renderer below is the validated double-buffered wireframe path.
 
 DrawWire:
         lea     CUSTOM,a6
@@ -1260,7 +1109,6 @@ DrawWire:
         move.w  ang_y,d1
         move.w  ang_z,d2
         bsr     CalcMatrix
-        bsr     UpdateShading               ; Calculate per-face brightness for cube
         lea     verts,a1
         moveq   #8-1,d7
         moveq   #CUBE_S,d6
@@ -1274,19 +1122,10 @@ DrawWire:
         move.w  ang_y,d2
         neg.w   d2
         bsr     CalcMatrix
-        bsr     UpdateOctahedronShading    ; Calculate per-face brightness for octahedron
         moveq   #6-1,d7
         moveq   #OCTA_S,d6
         bsr     TransformVerts             ; a1 continues at the octahedron vertices
 
-        ; Sphere shading (Phase 3)
-        bsr     UpdateSphereShading        ; Procedural vertex shading
-
-        ; Update particles and sort (Phase 4)
-        bsr     UpdateParticles            ; Animate particles
-        bsr     SortFaces                  ; Painters algorithm ordering
-
-        bsr     DrawSolid                  ; render shaded cube faces (Phase 2C)
         bsr     BlitWait                   ; the clear must be done before lines go in
         move.w  #SCREEN_W_BYTES,BLTCMOD(a6)    ; registers every line shares: set once
         move.w  #SCREEN_W_BYTES,BLTDMOD(a6)
@@ -1581,6 +1420,8 @@ BlitLine:
 old_dmacon:  dc.w 0
 old_intena:  dc.w 0
 old_adkcon:  dc.w 0
+aga_enabled: dc.b 0
+        even
 phase:       dc.w 0
 scroll_div:  dc.b 0
 glyph_col:   dc.b 0
@@ -1604,6 +1445,11 @@ ball_zc:     ds.w NBALLS        ; per ball: distance, screen x, screen y
 ball_sx:     ds.w NBALLS
 ball_sy:     ds.w NBALLS
 ball_order:  ds.w NBALLS        ; ball numbers, nearest first
+; AGA low RGB nibbles for colours 0..15. High nibbles remain controlled by
+; the normal OCS-compatible Copper palette. Values are $0rgb (4 low bits each).
+aga_palette_low:
+        dc.w $000,$124,$248,$36C,$48F,$5AF,$6CF,$7EF
+        dc.w $8FF,$9DF,$ABF,$B9F,$C7F,$D5F,$E3F,$F1F
 frame_no:    dc.w 0
 wire_cx:     dc.w MID_CX
 wire_zoff:   dc.w WIRE_ZOFF
@@ -1622,81 +1468,8 @@ tcol:        ds.l 9             ; matrix * vertex magnitude, by column
 proj:        ds.w 14*2          ; projected (x, y) of the 14 wireframe vertices
 stars:       ds.b NSTARS*STAR_SIZE
 
-; ---- PHASE 2: Gouraud-Shaded 3D Objects (cube data) ----
-; Cube face definitions: 6 faces × 10 bytes
-; Format: nx, ny, nz (8-bit normals), v0, v1, v2, v3 (vertex indices), colour_base
-cube_faces:
-        dc.b 0,0,-128, 0,1,2,3, 0        ; Front (Z-)
-        dc.b 0,0,128, 4,7,6,5, 1         ; Back (Z+)
-        dc.b -128,0,0, 0,3,7,4, 2        ; Left (X-)
-        dc.b 128,0,0, 1,5,6,2, 3         ; Right (X+)
-        dc.b 0,-128,0, 0,4,5,1, 4        ; Bottom (Y-)
-        dc.b 0,128,0, 3,2,6,7, 5         ; Top (Y+)
-
-; Cube vertices: 8 × 6 bytes (3 × 16-bit signed)
-; Half-size 40: vertex = (±40, ±40, ±40)
-cube_verts:
-        dc.w -40,-40,-40  ; 0: front-lower-left
-        dc.w 40,-40,-40   ; 1: front-lower-right
-        dc.w 40,40,-40    ; 2: front-upper-right
-        dc.w -40,40,-40   ; 3: front-upper-left
-        dc.w -40,-40,40   ; 4: back-lower-left
-        dc.w 40,-40,40    ; 5: back-lower-right
-        dc.w 40,40,40     ; 6: back-upper-right
-        dc.w -40,40,40    ; 7: back-upper-left
-
-; Per-face shading lookup (updated each frame): 6 bytes, 0-7 brightness
-shading_lookup:
-        ds.b 6
-
-; Light direction (fixed-point, scaled by 128): (-0.5, -0.7, 0.5)
-light_x: dc.b -64
-light_y: dc.b -90
-light_z: dc.b 64
-
-; ---- PHASE 3: Octahedron Object ----
-; 6 vertices (axes: ±28, 0, 0), (0, ±28, 0), (0, 0, ±28)
-octahedron_verts:
-        dc.w 28,0,0    ; 0: right
-        dc.w -28,0,0   ; 1: left
-        dc.w 0,28,0    ; 2: top
-        dc.w 0,-28,0   ; 3: bottom
-        dc.w 0,0,28    ; 4: front
-        dc.w 0,0,-28   ; 5: back
-
-; 8 triangular faces (scaled down for 64-colour palette)
-octahedron_faces:
-        dc.b 1,1,-1, 0,2,4, 8     ; top-right-front
-        dc.b 1,1,1, 0,4,5, 9      ; top-right-back
-        dc.b -1,1,-1, 1,4,2, 10   ; top-left-front
-        dc.b -1,1,1, 1,5,4, 11    ; top-left-back
-        dc.b 1,-1,-1, 3,4,0, 12   ; bottom-right-front
-        dc.b 1,-1,1, 3,5,0, 13    ; bottom-right-back
-        dc.b -1,-1,-1, 3,1,4, 14  ; bottom-left-front
-        dc.b -1,-1,1, 3,1,5, 15   ; bottom-left-back
-
-octahedron_shading:
-        ds.b 8                     ; 8 faces, brightness 0-7
-
-; ---- PHASE 3: Sphere Object (simplified) ----
-; Procedural sphere: 8 rings × 8 segments = 64 vertices
-; Data: 64 vertices stored, shading calculated per-frame
-
-sphere_verts:
-        ds.w 64*3                  ; 192 words = 384 bytes (64 vertices × 3 coords)
-
-sphere_shading:
-        ds.b 64                    ; 64 vertices, brightness 0-7
-
-; ---- PHASE 4: Dynamic Sorting ----
-; Face ordering array (updated per frame for painters algorithm)
-face_order:
-        ds.b 200                   ; ~200 faces max (cube 6 + octahedron 8 + sphere ~128)
-
-; ---- PHASE 4: Particle System ----
-; 32 particles: x, y, vx, vy, life (10 bytes each)
-particles:
-        ds.b 32*10                 ; 320 bytes
+; Experimental solid-object data is not linked into the production binary.
+; See src/phase2c_drawsolid.s for the quarantined research implementation.
 
 ; The twelve DMA visible labels as link-time addresses. AllocChipMem rewrites
 ; every long word in place, so ptr_* slots hold runtime chip RAM addresses.
@@ -1710,8 +1483,11 @@ gfx_name:    dc.b "graphics.library",0
         even
 
 scroll_text:
-        dc.b "   UBER CRACKING SERVICE PRESENTS: NEON VECTORS - A TINY 68000 OCS CRACKTRO - 3D WIREFRAME VECTORS - DEPTH STARFIELD - COPPER GRADIENTS - FOUR CHANNEL PAULA MOD - GREETINGS TO EVERYONE STILL MAKING THE OLD MACHINES SING!   ",0
+        dc.b "   UBER CRACKING SERVICE PRESENTS: NEON VECTORS - A TINY 68000 OCS CRACKTRO - 3D WIREFRAME VECTORS - DEPTH STARFIELD - COPPER GRADIENTS - BEAT-SYNCED COPPER PULSE - FOUR CHANNEL PAULA MOD - GREETINGS TO EVERYONE STILL MAKING THE OLD MACHINES SING!   ",0
         even
+
+beat_raster_colors:
+        dc.w $DFF,$7BD,$357              ; three-frame downbeat flash: white-cyan -> neon blue
 
 raster_colors:
         dc.w $102,$203,$304,$405,$506,$607,$708,$819
