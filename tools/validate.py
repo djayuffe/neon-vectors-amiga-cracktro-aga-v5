@@ -114,13 +114,20 @@ check('BPLCON3_LOCT  EQU $0200' in hw_src, 'AGA BPLCON3 LOCT bit must remain $02
 aga_block=re.search(r'(?ms)^DetectAGA:.*?^; ---------------------------------------------------------------------------\n; Chip memory\.', (ROOT/'src/main.s').read_text())
 if aga_block:
     ab=aga_block.group(0)
-    check('cmpi.w  #DENISEID_LISA,DENISEID(a6)' in ab, 'AGA detection must compare DENISEID against Lisa ID')
+    check('andi.w  #$00FF,d0' in ab and 'cmpi.w  #DENISEID_LISA,d0' in ab, 'AGA detection must compare DENISEID against Lisa ID')
     check(ab.count('tst.b   aga_enabled') >= 2, 'AGA-only init/palette paths must be capability guarded')
     check(re.search(r'(?ms)^UpdateAGAPalette:.*move\.w\s+#BPLCON3_LOCT,BPLCON3\(a6\).*dbra\s+d7,\.loop\s*\n\s*clr\.w\s+BPLCON3\(a6\)', ab) is not None,
           'AGA palette path must select LOCT then restore high-nibble mode')
     check('move.w  #AGA_FMODE_OCS,FMODE(a6)' in ab, 'AGA init must explicitly select conservative FMODE')
 else:
     check(False, 'missing AGA capability block')
+
+check('moveq   #31,d7' in ab, 'AGA palette must cover all 32 playfield and sprite entries')
+check('andi.w  #31,d0' in ab and 'lsl.w   #6,d0' in ab, 'AGA palette must select one of 32 complete banks')
+check('btst    #1,297(a6)' in (ROOT/'src/main.s').read_text(), '68020 executable requires Exec AttnFlags guard')
+
+check('move.w  #$0011,BPLCON4(a6)' in ab, 'AGA sprite palette base must remain 16 for both groups')
+check('cmpi.w  #4,d0' in ab and 'cmpi.w  #300,d0' in ab, 'AGA low palette must follow Copper header')
 
 # Structural DMA-memory contract: Copper and all DMA payload labels must occur
 # after the chipdata section declaration in the single source translation unit.
@@ -182,7 +189,7 @@ MNEMONICS=set("""movem move moveq movea lea pea jsr bsr jmp rts rte bra nop
  add addi addq adda sub subi subq suba and andi or ori eor eori not lsl lsr asl asr
  rol ror roxl roxr neg ext divs divu cmpa btst bset bchg bclr dbra dbf mulu muls swap tas link unlk exg section
  include incbin incsrc cnop even align org ds dc dcb dcd equ set xdef xref export
- import global macro endm rept endr if else endif space skip""".split())
+ import global macro endm rept endr if ifnd ifne else endif space skip""".split())
 REGISTERS=set(['d%d'%i for i in range(8)]+['a%d'%i for i in range(7)]+['sp','pc','fp','sr','ccr'])
 EXPORTS={'xdef','xref','export','import','global'}
 TOK=re.compile(r'\.?[A-Za-z_][A-Za-z0-9_]*')
@@ -366,7 +373,7 @@ check(re.search(r'LVO_TypeOfMem\(a6\)',_alloc) is not None
       'the chip memory check must happen before the payload is copied')
 check(re.search(r'jsr\s+LVO_FreeMem',_alloc) is not None,
       'a non-chip allocation must be released with FreeMem rather than leaked')
-check(equvals.get('SILENCE_WORD')==0x8080,'SILENCE_WORD must be $8080 (unsigned 8 bit silence)')
+check(equvals.get('SILENCE_WORD')==0,'SILENCE_WORD must be zero (signed 8 bit silence)')
 
 
 # The library base must be in a6 (AmigaOS calling convention). Kickstart's Exec never reads
@@ -436,22 +443,20 @@ check(equvals.get('LVO_CopyMem')==-624 and equvals.get('LVO_FreeMem')==-210 and 
       'Exec LVO offsets for memory/copy/scheduling calls are wrong')
 
 # --- audio sample sanity ----------------------------------------------------
-# Paula plays 8 bit samples as unsigned, so a correct waveform is centred on
-# 128. Masking a signed wave with &255 pins it near full scale and clicks on
-# every loop point, and a hat that never decays never sounds like a hat.
+# Paula sample bytes are signed two-complement PCM centered on zero.
 import math
-def rms(d): return math.sqrt(sum((v-128)**2 for v in d)/len(d)) if d else 0.0
+def rms(d): return math.sqrt(sum(v*v for v in d)/len(d)) if d else 0.0
 if len(mod)>=1084:
     off=1084+pats*1024
     for i in range(31):
         o=20+i*30; name=mod[o:o+22].split(b'\0')[0].decode('latin-1').strip()
         ln=int.from_bytes(mod[o+22:o+24],'big')*2; ls=int.from_bytes(mod[o+26:o+28],'big')*2
         if not ln: continue
-        d=mod[off+ls:off+ls+ln]
+        d=[v if v<128 else v-256 for v in mod[off:off+ln]]
         check(len(d)==ln,f'sample {i+1} {name!r}: data truncated at {len(d)} of {ln} bytes')
         if not d: continue
         mean=sum(d)/len(d)
-        check(96<=mean<=160,f'sample {i+1} {name!r}: mean {mean:.1f} is not centred on 128 (signed data written raw?)')
+        check(abs(mean)<=12,f'sample {i+1} {name!r}: mean {mean:.1f} is not centered on zero')
         if name in ('LEAD','KICK'):
             step=max(abs(d[j]-d[j-1]) for j in range(1,len(d)))
             check(step<=64,f'sample {i+1} {name!r}: {step} sample step suggests a DC jump')

@@ -97,7 +97,6 @@ png=b'\x89PNG\r\n\x1a\n'+png_chunk(b'IHDR',struct.pack('>IIBBBBB',W*scale,H*scal
 periods={}; names=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']; base=[856,808,762,720,678,640,604,570,538,508,480,453]
 for octv in range(1,5):
     for i,n in enumerate(names): periods[f'{n}{octv}']=max(113,base[i]>>(octv-1))
-def u8(v): return 0 if v<0 else 255 if v>255 else v
 def pcm_bass(n=256):
     # Rounded pulse/saw hybrid: more harmonics than the old square but loop-safe.
     out=[]
@@ -106,7 +105,7 @@ def pcm_bass(n=256):
         saw=2*ph-1
         pulse=1.0 if ph < .38 else -1.0
         v=.55*pulse+.45*saw
-        out.append(u8(128+int(68*v)))
+        out.append(int(max(-127,min(127,68*v))) & 255)
     return bytes(out)
 def pcm_lead(n=256):
     # Bright but compact additive lead; integer-period partials make a seamless loop.
@@ -114,7 +113,7 @@ def pcm_lead(n=256):
     for i in range(n):
         ph=2*math.pi*i/n
         v=math.sin(ph)+.34*math.sin(2*ph)+.18*math.sin(3*ph)+.08*math.sin(5*ph)
-        out.append(u8(128+int(62*v)))
+        out.append(int(max(-127,min(127,62*v))) & 255)
     return bytes(out)
 def pcm_kick(n=640):
     out=[]; ph=0.0
@@ -124,14 +123,14 @@ def pcm_kick(n=640):
         ph+=2*math.pi*hz/8000
         body=math.sin(ph)+.18*math.sin(ph*.5)
         click=(1-t*12) if t<1/12 else 0
-        out.append(u8(128+int(96*math.exp(-6.5*t)*body+20*click)))
+        out.append(int(max(-127,min(127,96*math.exp(-6.5*t)*body+20*click))) & 255)
     return bytes(out)
 def pcm_hat(n=320):
     rng=random.Random(68000); out=[]
     hp=0.0
     for i in range(n):
         t=i/n; x=rng.uniform(-1,1); y=x-hp*.78; hp=x
-        out.append(u8(128+int(78*math.exp(-6.2*t)*y)))
+        out.append(int(max(-127,min(127,78*math.exp(-6.2*t)*y))) & 255)
     return bytes(out)
 samples=[('VECTOR BASS',pcm_bass()),('NEON LEAD',pcm_lead()),('KICK',pcm_kick()),('HAT',pcm_hat())]
 while len(samples)<31: samples.append(('',b''))

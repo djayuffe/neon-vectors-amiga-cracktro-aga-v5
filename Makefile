@@ -16,7 +16,7 @@ CHECKED = build/.validated
 
 all: $(TARGET) hunkcheck
 
-$(STAMP): $(GEN)
+$(STAMP): $(GEN) tools/logo_art.py
 	@mkdir -p assets
 	$(PYTHON) $(GEN)
 	@touch $@
@@ -61,7 +61,7 @@ toolchain:
 
 $(TARGET): $(CHECKED) $(SRCS) | build
 	@if [ -n "$(VASM)" ]; then A="$(VASM)"; elif [ -x "$(LOCAL_VASM)" ]; then A="$(LOCAL_VASM)"; else echo "No VASM. Run 'make toolchain' after supplying tools/vendor/vasm, or install vasmm68k_mot."; exit 2; fi; \
-	$$A $(VASMFLAGS) -o $@ src/main.s
+	"$$A" $(VASMFLAGS) -o $@ src/main.s
 
 hunkcheck: $(TARGET)
 	$(PYTHON) tools/hunkcheck.py $(TARGET)
@@ -84,3 +84,21 @@ distclean: clean
 release: clean all verify-repro manifest
 
 .PHONY: all assets validate doctor mutants verify-repro verify-manifest emutest emu-mutants manifest toolchain hunkcheck clean distclean release
+
+# Dedicated 68020 executable; a 68000-safe startup check rejects older CPUs.
+aga020: all
+	@A="$(VASM)"; if [ -z "$$A" ]; then A="$(LOCAL_VASM)"; fi; "$$A" -m68020 -DCPU020=1 -kick1hunks -Fhunkexe -nosym -I./src -o build/neon_vectors_020 src/main.s
+	$(PYTHON) tools/hunkcheck.py build/neon_vectors_020
+
+emutest-aga:
+	$(PYTHON) tools/emu_test.py --aga
+
+emutest-020:
+	$(PYTHON) tools/emu_test.py --aga --cpu 68020
+
+.PHONY: aga020 emutest-aga emutest-020
+
+aga-mutants:
+	$(PYTHON) tools/test_aga_profiles.py
+
+.PHONY: aga-mutants

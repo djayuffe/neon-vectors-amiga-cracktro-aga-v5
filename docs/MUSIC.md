@@ -25,4 +25,4 @@ At PAL 50 Hz and ProTracker BPM 125, one VBlank is one tracker tick. Speed 6 mea
 
 ## Paula sample contract
 
-All generated PCM is unsigned and centred on 128. Percussion uses a one-word terminal loop that the player redirects to `audio_silence` after the trigger, preventing one-shot tails from repeating. For each trigger the player disables the channel DMA bit, loads location/length/period/volume, enables all prepared channels together, waits two raster lines, then installs the loop or silence terminal state.
+All generated PCM is signed two-complement and centered on zero, matching Paula. The silence word is `$0000`. Percussion uses a one-word terminal loop that the player redirects to `audio_silence` after the trigger, preventing one-shot tails from repeating. For each trigger the player disables the channel DMA bit, loads location/length/period/volume, enables all prepared channels together, waits two raster lines, then installs the loop or silence terminal state.

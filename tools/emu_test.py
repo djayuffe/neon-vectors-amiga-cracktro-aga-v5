@@ -79,8 +79,8 @@ def find_vasm():
     sys.exit('emu_test: no vasmm68k_mot (run "make toolchain" or set VASM)')
 
 
-def assemble(out):
-    r = subprocess.run([find_vasm(), '-m68000', '-kick1hunks', '-Fhunkexe', '-I', str(ROOT / 'src'),
+def assemble(out, cpu="68000"):
+    r = subprocess.run([find_vasm(), '-m'+cpu, '-DCPU020='+str(int(cpu=='68020')), '-kick1hunks', '-Fhunkexe', '-I', str(ROOT / 'src'),
                         '-o', str(out), str(ROOT / 'src/main.s')], capture_output=True, text=True, cwd=ROOT)
     if r.returncode:
         sys.exit('emu_test: assembly failed\n' + r.stdout + r.stderr)
@@ -129,9 +129,14 @@ def parse_hunks(b):
 
 
 class Amiga:
-    def __init__(self, exe, loader_chip, alloc_fast):
-        self.mach = m68k.Machine(m68k.CPUType.M68000, 15 * 1024)
+    def __init__(self, exe, loader_chip, alloc_fast, cpu="68000", aga=False):
+        self.mach = m68k.Machine((m68k.CPUType.M68020 if cpu=="68020" else m68k.CPUType.M68000), 15 * 1024)
         self.cpu, self.mem = self.mach.cpu, self.mach.mem
+        self.cpu_model = cpu
+        self.aga = aga
+        self.palette_low = [0]*32
+        self.color_raw = bytes(64)
+        self.aga_writes = 0
         self.alloc_fast = alloc_fast
         self.t = 0
         self.nest_forbid = self.nest_disable = 0
@@ -214,6 +219,8 @@ class Amiga:
         # custom register defaults
         mem.w16(CUSTOM + 0x02, self.dmacon); mem.w16(CUSTOM + 0x1C, self.intena)
         mem.w16(CUSTOM + 0x10, self.adkcon)
+        mem.w16(EXEC + 296, 2 if self.cpu_model=="68020" else 0)
+        mem.w16(CUSTOM + 0x7C, 0xA5F8 if self.aga else 0xFFFF)
         mem.w8(CIAAPRA, 0xFF)
 
     def ret(self):
@@ -394,6 +401,20 @@ class Amiga:
                 dptr += w * 2 + dmod
 
     def poll_custom(self):
+        # CPU writes only; Copper high-nibble writes are interpreted at render time.
+        colors = self.mem.r_block(CUSTOM+0x180, 64)
+        mode = self.mem.r16(CUSTOM+0x106)
+        if mode or self.mem.r16(CUSTOM+0x10C) or self.mem.r16(CUSTOM+0x1FC):
+            self.aga_writes += 1
+            check(self.aga, 'AGA-only control register used on compatibility hardware')
+        if mode & 0x200:
+            for i in range(32):
+                if colors[2*i:2*i+2] != self.color_raw[2*i:2*i+2]:
+                    self.palette_low[i] = int.from_bytes(colors[2*i:2*i+2], 'big') & 0xFFF
+            if self.frame_marks:
+                line=(self.t%FRAME_CYCLES)//LINE_CYCLES
+                check(4<=line<44, 'AGA low palette writes must follow header and precede display')
+        self.color_raw = colors
         if self.mem.r16(CUSTOM + 0x58):
             self.blit()
             self.mem.w16(CUSTOM + 0x58, 0)          # so an identical BLTSIZE write is seen again
@@ -483,6 +504,10 @@ class Amiga:
                 self.in_wfs = True                  # one entry per call, not per pass of its spin loop
                 self.exit_pc = mem.r32(cpu.r_reg(R.A7))
                 self.frame_marks.append(self.t)
+                if self.aga and mem.r16(self.sym('frame_no')):
+                    phase=(mem.r16(self.sym('frame_no'))>>2)&31
+                    check(self.palette_low==gen_tables.aga_low_palette(phase), 'AGA palette phase/low nibbles differ during frame execution')
+                    check(mem.r16(CUSTOM+0x106)==0, 'AGA LOCT left active at frame boundary')
                 cl = mem.r32(CUSTOM + 0x80)
                 if cl:
                     # BPL2PT words sit at offsets 10/14 from cop_bpl1, which is the label after the header
@@ -540,13 +565,19 @@ class Amiga:
         pending = list(evs)
         pal_by_line, bplcon1_by_line = {}, {}
         cur, scroll = dict(pal), 0
+        low_cur = dict(pal)
+        low_by_line = {}
         for y in range(FRAME_LINES):
             while pending and pending[0][0] <= y:
                 _, r, v = pending.pop(0)
                 if 0x180 <= r < 0x1C0:
                     cur[(r - 0x180) // 2] = v
+                    low_cur[(r - 0x180) // 2] = v # Lisa high write also copies the low nibbles
                 elif r == 0x102:
                     scroll = v
+            if self.aga and y==40:
+                low_cur=dict(enumerate(self.palette_low))
+            low_by_line[y]=dict(low_cur)
             pal_by_line[y] = dict(cur)
             bplcon1_by_line[y] = scroll
         diwstrt, diwstop = first.get(0x8E, 0), first.get(0x90, 0)
@@ -581,6 +612,7 @@ class Amiga:
             planes_px.append(rowpix)
             pal_l = pal_by_line[y]
             img.append([pal_l[v] for v in rowpix])
+        final_px = [list(row) for row in planes_px]
         # hardware sprites over the playfield (sprite 0 in front); colour 0 is transparent
         for n in range(7, -1, -1):
             a_ = out['spr_ptr'][n]
@@ -596,10 +628,12 @@ class Amiga:
                     if c and 0 <= x < 320 and 0 <= row < len(img):
                         # BPLCON2 PF1P = code: the playfield is in front of sprites 2*code and up
                         if n >= 2 * (first.get(0x104, 0) & 7) or planes_px[row][x] == 0:
+                            final_px[row][x] = 16 + 4 * (n // 2) + c
                             img[row][x] = pal_by_line[vstart + ln][16 + 4 * (n // 2) + c]
         out['spr_pages'] = [mem.r_block(out['spr_ptr'][n], 80) for n in range(8)]
         out['px'] = planes_px
         out['img'] = img
+        out['rgb24'] = [[(((v>>8)&15)*16+(low_by_line[y+y0][final_px[y][x]]>>8&15), ((v>>4)&15)*16+(low_by_line[y+y0][final_px[y][x]]>>4&15), (v&15)*16+(low_by_line[y+y0][final_px[y][x]]&15)) for x,v in enumerate(row)] for y,row in enumerate(img)] if self.aga else None
         out['planes'] = [mem.r_block(ptr[p] + 2, 10240) for p in range(4)]
         out['pal_by_line'] = pal_by_line
         out['bplcon1_by_line'] = bplcon1_by_line
@@ -768,6 +802,9 @@ def main():
     ap.add_argument('--alloc-fast', action='store_true', help='make AllocMem return fast RAM (failure path)')
     ap.add_argument('--ntsc', action='store_true', help='262 line frame: the PAL-only intro must still run and exit, not hang')
     ap.add_argument('--loader-chip', action='store_true', help='let the loader honour the chip hunk flag')
+    ap.add_argument('--reject-020', action='store_true', help='run the 020 executable on a 68000 and verify safe rejection')
+    ap.add_argument('--aga', action='store_true', help='Lisa model including reserved DENISEID high byte')
+    ap.add_argument('--cpu', choices=['68000','68020'], default='68000')
     args = ap.parse_args()
     global FRAME_LINES, FRAME_CYCLES
     if args.ntsc:
@@ -775,14 +812,14 @@ def main():
 
     tmp = Path(tempfile.mkdtemp(prefix='neon_emu_'))
     exe = tmp / 'neon_vectors_sym'
-    assemble(exe)
+    assemble(exe, "68020" if args.reject_020 else args.cpu)
     mod = (ROOT / 'assets/neon.mod').read_bytes()
     logo_all = (ROOT / 'assets/logo.raw').read_bytes()
     logo_planes = [logo_all[i * 2560:(i + 1) * 2560] for i in range(4)]
     logo = logo_planes[0]
     font = (ROOT / 'assets/font.raw').read_bytes()
 
-    a = Amiga(exe, args.loader_chip, args.alloc_fast)
+    a = Amiga(exe, args.loader_chip, args.alloc_fast, args.cpu, args.aga)
     a.consts = source_equs()
     snap_frame = min(args.snap, args.frames - 1)
     # Every frame, the wireframe buffer the Copper is showing must equal the reference frame
@@ -819,7 +856,7 @@ def main():
 
     # ---------------------------------------------------------------- exit state
     print('exit path')
-    if args.alloc_fast:
+    if args.alloc_fast or args.reject_020:
         check(a.cpu.r_reg(R.D0) == 20, 'alloc failure must return RETURN_FAIL (20), got %d' % a.cpu.r_reg(R.D0))
         check(not a.allocs, 'memory leaked after failed chip allocation')
         check(a.gfx_open == 0, 'graphics.library left open')
@@ -830,6 +867,8 @@ def main():
         finish(); return
     c = a.cpu
     check(c.r_reg(R.D0) == 0, 'return code d0 = %d, expected 0' % c.r_reg(R.D0))
+    if c.r_reg(R.D0) != 0:
+        finish(); return
     for i in range(1, 8):
         check(c.r_reg(R.D0 + i) == a.sentinel_regs[i - 1], 'd%d not preserved' % i)
     for i in range(7):
@@ -951,7 +990,7 @@ def main():
             check(seen[ch][:n] == want[ch][:n], 'channel %d loop/terminal registers wrong: got %s want %s'
                   % (ch, [(hex(x), y) for x, y in seen[ch][:2]], [(hex(x), y) for x, y in want[ch][:2]]))
     print('  %d channel starts over %d rows match the module' % (len(got), n_rows))
-    check(mem.r16(silence) == 0x8080 if a.hunk_mem[2] != 1 or args.loader_chip else True, 'silence word is not $8080')
+    check(mem.r16(silence) == 0 if a.hunk_mem[2] != 1 or args.loader_chip else True, 'silence word is not signed PCM zero')
 
     # ---------------------------------------------------------------- display
     print('display (frame %d)' % snap_frame)
@@ -1020,6 +1059,16 @@ def main():
     ok2 = diff('plane 2 (far + near stars)', sn['planes'][2], e2)
     ok1 = diff('plane 1 (logo + wireframe, displayed buffer)', sn['planes'][1], e1) if wire_ok else True
     ok3 = diff('plane 3 (logo, displayed buffer)', sn['planes'][3], e3)
+    # ---- AGA capability and low-nibble programming, including sprite colors.
+    check(mem.r8(a.sym('aga_enabled')) == int(args.aga), 'Lisa detection failed')
+    check(mem.r16(CUSTOM+0x106)==0, 'LOCT was not restored before Copper execution')
+    if args.aga:
+        check(mem.r16(CUSTOM+0x10C)==0x11, 'AGA sprites must use palette entries 16..31')
+        want_low=gen_tables.aga_low_palette((mem.r16(a.sym('frame_no'))>>2)&31)
+        check(a.palette_low==want_low, 'AGA low RGB palette differs from all 32 expected entries')
+        check(a.aga_writes>0, 'AGA palette path never executed')
+    else:
+        check(a.aga_writes==0, 'compatibility path touched AGA controls')
     # ---- palette / Copper
     pbl = sn['pal_by_line']
     check(all(pbl[44 + 2][k] == gen_tables.LOGO_HEADER_PALETTE[k] for k in (1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15)),
@@ -1089,8 +1138,8 @@ def main():
     if args.png:
         pal_rgb = lambda v: bytes(((v >> 8) & 15) * 17 for _ in range(1)) + bytes(((v >> 4) & 15) * 17 for _ in range(1)) + bytes((v & 15) * 17 for _ in range(1))
         rows = []
-        for row in sn['img']:
-            r = b''.join(pal_rgb(v) * 2 for v in row)
+        for row in (sn['rgb24'] if args.aga else sn['img']):
+            r = b''.join((bytes(v) if args.aga else pal_rgb(v)) * 2 for v in row)
             rows += [r, r]
         png(Path(args.png), 640, len(rows), rows)
         print('  wrote', args.png)

@@ -41,6 +41,9 @@ base_ok = rc == 0
 print()
 print('=== mutations ===')
 results = []
+results.append(mutate('AGA drops sprite precision', 'src/main.s', 'moveq   #31,d7', 'moveq   #15,d7', '32 playfield'))
+results.append(mutate('AGA loses reserved-byte mask', 'src/main.s', 'andi.w  #$00FF,d0', 'andi.w  #$FFFF,d0', 'AGA detection'))
+results.append(mutate('020 CPU guard removed', 'src/main.s', 'btst    #1,297(a6)', 'btst    #0,297(a6)', 'AttnFlags'))
 M_ = mutate
 results.append(M_('Forbid/Disable swapped', 'src/main.s',
     '        jsr     LVO_Forbid(a6)\n        jsr     LVO_Disable(a6)\n        lea     CUSTOM,a6',
@@ -50,8 +53,8 @@ results.append(M_('Enable/Permit swapped', 'src/main.s',
     '        jsr     LVO_Permit(a6)\n        jsr     LVO_Enable(a6)', 'Enable before Permit'))
 results.append(M_('PatchCopper writes register word', 'src/main.s',
     'move.w  d0,6(a1)', 'move.w  d0,4(a1)', 'PatchCopper'))
-results.append(M_('silence word 0 instead of 8080', 'src/main.s',
-    'SILENCE_WORD    EQU $8080', 'SILENCE_WORD    EQU 0', 'SILENCE_WORD'))
+results.append(M_('unsigned silence word', 'src/main.s',
+    'SILENCE_WORD    EQU $0000', 'SILENCE_WORD    EQU $8080', 'SILENCE_WORD'))
 results.append(M_('undefined symbol typo', 'src/main.s',
     'bsr     ClearScreen', 'bsr     ClearScreeen', 'undefined symbol'))
 results.append(M_('undefined local label', 'src/main.s',
@@ -129,7 +132,7 @@ results.append(M_('AGA LOCT not restored', 'src/main.s',
     '        clr.w   BPLCON3(a6)                ; restore high-nibble mode for Copper',
     '        nop                                ; broken: leaves LOCT selected', 'restore high-nibble'))
 results.append(M_('AGA detection compares ECS ID', 'src/main.s',
-    'cmpi.w  #DENISEID_LISA,DENISEID(a6)', 'cmpi.w  #$00FC,DENISEID(a6)', 'Lisa ID'))
+    'cmpi.w  #DENISEID_LISA,d0', 'cmpi.w  #$00FC,d0', 'Lisa ID'))
 results = [r for r in results if r is not None]
 print()
 print(f'mutations caught: {sum(1 for r in results if r)}/{len(results)}')

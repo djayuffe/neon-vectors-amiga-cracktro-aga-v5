@@ -174,8 +174,7 @@ MEMF_CLEAR EQU $00010000
 RETURN_OK   EQU 0
 RETURN_FAIL EQU 20
 
-; AGA/Lisa. Lisa returns $F8 in the high byte family through DENISEID.
-; We compare the complete documented ID value used by classic AGA detection.
+; AGA/Lisa returns $F8 in the low byte; upper byte is reserved.
 DENISEID_LISA EQU $00F8
 BPLCON3_LOCT  EQU $0200    ; 1 = COLORxx writes low RGB nibbles on AGA
 AGA_FMODE_OCS EQU $0000    ; conservative 16-bit fetch / OCS-compatible DMA width

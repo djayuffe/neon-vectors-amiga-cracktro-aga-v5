@@ -1,4 +1,7 @@
         include "hardware.i"
+        ifnd CPU020
+CPU020  equ 0
+        endif
 
 SCREEN_W_BYTES  EQU 40
 SCREEN_H        EQU 256
@@ -7,7 +10,7 @@ PLANE_LONGS     EQU PLANE_SIZE/4
 SCREEN_LONGS    EQU PLANE_LONGS*6   ; 4 displayed planes; planes 1 and 3 each have two buffers
 CHIPDATA_SIZE   EQU chipdata_end-chipdata_begin
 FRAME_SYNC_LINE EQU 300     ; first line below the display window (DIWSTOP = line 300)
-SILENCE_WORD    EQU $8080   ; 8 bit Paula silence is unsigned $80, not 0
+SILENCE_WORD    EQU $0000   ; Paula uses signed 8-bit PCM; zero is silence
 
 ; Screen layout (lines are screen rows; display line = row + 44).
 LOGO_Y          EQU 8       ; 64 line logo band
@@ -75,6 +78,10 @@ _start:
 ; All data below is addressed absolutely: the hunk loader relocates it, whereas
 ; PC-relative addressing cannot reach another hunk and cannot be a destination.
         move.l  4.w,a6
+        ifne CPU020
+        btst    #1,297(a6)                 ; ExecBase.AttnFlags AFF_68020
+        beq     .open_fail                 ; reject before any 020 opcode or OS takeover
+        endif
         lea     gfx_name,a1                 ; OpenLibrary(a1 = name, d0 = version)
         moveq   #0,d0                       ; (OldOpenLibrary is obsolete and traps under AROS)
         jsr     LVO_OpenLibrary(a6)
@@ -148,9 +155,9 @@ _start:
         addq.w  #1,frame_no
         bsr     UpdateWave                 ; Copper rows above the beam first
         bsr     UpdateBars
+        bsr     UpdateAGAPalette           ; after Copper header, before logo and sprites
         bsr     UpdateSprites              ; also before the beam reaches the ring
         bsr     UpdateRaster
-        bsr     UpdateAGAPalette           ; low RGB nibbles only on Lisa/AGA
         bsr     UpdateStars
         bsr     UpdateScroller
         bsr     MOD_Tick                   ; (timing-critical drawing first: the tick may wait on the blitter-free Paula setup)
@@ -239,15 +246,18 @@ _start:
 ; The production renderer intentionally remains 320x256x4.  On Lisa/AGA we
 ; retain OCS-compatible 16-bit fetches (FMODE=0), but use the second COLORxx
 ; write bank selected by BPLCON3.LOCT to supply the low four RGB bits.  The
-; existing Copper continues to write the high RGB nibbles, so the same list is
-; valid on OCS/ECS and becomes a true 24-bit palette on AGA.
+; Copper high writes also copy low nibbles. The CPU override follows its header;
+; later band/gradient writes intentionally return those entries to 12-bit colour. The list is
+; valid on OCS/ECS. AGA low-nibble overrides apply until the next Copper colour write.
 ;
-; Crucial invariant: BPLCON3 is returned to LOCT=0 before the Copper can run.
+; Crucial invariant: BPLCON3 is returned to LOCT=0 before display colour changes.
 ; Otherwise every legacy COLORxx Copper move would update the low nibbles.
 ; ---------------------------------------------------------------------------
 DetectAGA:
         clr.b   aga_enabled
-        cmpi.w  #DENISEID_LISA,DENISEID(a6)
+        move.w  DENISEID(a6),d0
+        andi.w  #$00FF,d0                  ; upper identification byte is reserved
+        cmpi.w  #DENISEID_LISA,d0
         bne     .no
         move.b  #1,aga_enabled
 .no:
@@ -257,19 +267,31 @@ InitAGA:
         tst.b   aga_enabled
         beq     .done
         move.w  #AGA_FMODE_OCS,FMODE(a6)
-        clr.w   BPLCON4(a6)
+        move.w  #$0011,BPLCON4(a6)          ; both sprite groups use palette base 16
         clr.w   BPLCON3(a6)
-        bsr     UpdateAGAPalette
 .done:
         rts
 
 UpdateAGAPalette:
         tst.b   aga_enabled
         beq     .done
+; The Copper header writes high AND low nibbles at line 0 each frame.
+; Wait until its initial palette loads finish, then override the low bank.
+.wait_header:
+        bsr     BeamLine
+        cmpi.w  #4,d0
+        blo     .wait_header
+        cmpi.w  #300,d0
+        bhs     .wait_header
         move.w  #BPLCON3_LOCT,BPLCON3(a6)
         lea     aga_palette_low,a0
+        move.w  frame_no,d0
+        lsr.w   #2,d0
+        andi.w  #31,d0
+        lsl.w   #6,d0                      ; 32 words per bank
+        adda.w  d0,a0
         lea     COLOR00(a6),a1
-        moveq   #15,d7
+        moveq   #31,d7
 .loop:
         move.w  (a0)+,(a1)+
         dbra    d7,.loop
@@ -1139,14 +1161,24 @@ DrawWire:
 .edge:
         moveq   #0,d4
         move.b  (a4)+,d4
+        ifne CPU020
+        move.w  0(a3,d4.w*4),d0
+        move.w  2(a3,d4.w*4),d1
+        else
         lsl.w   #2,d4
         move.w  0(a3,d4.w),d0
         move.w  2(a3,d4.w),d1
+        endif
         moveq   #0,d4
         move.b  (a4)+,d4
+        ifne CPU020
+        move.w  0(a3,d4.w*4),d2
+        move.w  2(a3,d4.w*4),d3
+        else
         lsl.w   #2,d4
         move.w  0(a3,d4.w),d2
         move.w  2(a3,d4.w),d3
+        endif
         bsr     BlitLine
         cmpa.l  a5,a4
         blo     .edge
@@ -1185,59 +1217,129 @@ CalcMatrix:
 ; m00 = cz*cy
         move.w  cz,d0
         move.w  cy,d1
+        ifne CPU020
+        muls    d1,d0
+        asr.l   #7,d0
+        else
         bsr     Mul7
+        endif
         move.w  d0,(a2)
 ; m01 = cz*sy*sx - sz*cx
         move.w  cz,d0
         move.w  sy,d1
+        ifne CPU020
+        muls    d1,d0
+        asr.l   #7,d0
+        else
         bsr     Mul7
+        endif
         move.w  sx,d1
+        ifne CPU020
+        muls    d1,d0
+        asr.l   #7,d0
+        else
         bsr     Mul7
+        endif
         move.w  d0,d2
         move.w  sz,d0
         move.w  cx,d1
+        ifne CPU020
+        muls    d1,d0
+        asr.l   #7,d0
+        else
         bsr     Mul7
+        endif
         sub.w   d0,d2
         move.w  d2,2(a2)
 ; m02 = cz*sy*cx + sz*sx
         move.w  cz,d0
         move.w  sy,d1
+        ifne CPU020
+        muls    d1,d0
+        asr.l   #7,d0
+        else
         bsr     Mul7
+        endif
         move.w  cx,d1
+        ifne CPU020
+        muls    d1,d0
+        asr.l   #7,d0
+        else
         bsr     Mul7
+        endif
         move.w  d0,d2
         move.w  sz,d0
         move.w  sx,d1
+        ifne CPU020
+        muls    d1,d0
+        asr.l   #7,d0
+        else
         bsr     Mul7
+        endif
         add.w   d0,d2
         move.w  d2,4(a2)
 ; m10 = sz*cy
         move.w  sz,d0
         move.w  cy,d1
+        ifne CPU020
+        muls    d1,d0
+        asr.l   #7,d0
+        else
         bsr     Mul7
+        endif
         move.w  d0,6(a2)
 ; m11 = sz*sy*sx + cz*cx
         move.w  sz,d0
         move.w  sy,d1
+        ifne CPU020
+        muls    d1,d0
+        asr.l   #7,d0
+        else
         bsr     Mul7
+        endif
         move.w  sx,d1
+        ifne CPU020
+        muls    d1,d0
+        asr.l   #7,d0
+        else
         bsr     Mul7
+        endif
         move.w  d0,d2
         move.w  cz,d0
         move.w  cx,d1
+        ifne CPU020
+        muls    d1,d0
+        asr.l   #7,d0
+        else
         bsr     Mul7
+        endif
         add.w   d0,d2
         move.w  d2,8(a2)
 ; m12 = sz*sy*cx - cz*sx
         move.w  sz,d0
         move.w  sy,d1
+        ifne CPU020
+        muls    d1,d0
+        asr.l   #7,d0
+        else
         bsr     Mul7
+        endif
         move.w  cx,d1
+        ifne CPU020
+        muls    d1,d0
+        asr.l   #7,d0
+        else
         bsr     Mul7
+        endif
         move.w  d0,d2
         move.w  cz,d0
         move.w  sx,d1
+        ifne CPU020
+        muls    d1,d0
+        asr.l   #7,d0
+        else
         bsr     Mul7
+        endif
         sub.w   d0,d2
         move.w  d2,10(a2)
 ; m20 = -sy
@@ -1247,12 +1349,22 @@ CalcMatrix:
 ; m21 = cy*sx
         move.w  cy,d0
         move.w  sx,d1
+        ifne CPU020
+        muls    d1,d0
+        asr.l   #7,d0
+        else
         bsr     Mul7
+        endif
         move.w  d0,14(a2)
 ; m22 = cy*cx
         move.w  cy,d0
         move.w  cx,d1
+        ifne CPU020
+        muls    d1,d0
+        asr.l   #7,d0
+        else
         bsr     Mul7
+        endif
         move.w  d0,16(a2)
         rts
 
@@ -1445,11 +1557,41 @@ ball_zc:     ds.w NBALLS        ; per ball: distance, screen x, screen y
 ball_sx:     ds.w NBALLS
 ball_sy:     ds.w NBALLS
 ball_order:  ds.w NBALLS        ; ball numbers, nearest first
-; AGA low RGB nibbles for colours 0..15. High nibbles remain controlled by
+; AGA low RGB nibbles for all 32 playfield and sprite colours. High nibbles remain controlled by
 ; the normal OCS-compatible Copper palette. Values are $0rgb (4 low bits each).
 aga_palette_low:
-        dc.w $000,$124,$248,$36C,$48F,$5AF,$6CF,$7EF
-        dc.w $8FF,$9DF,$ABF,$B9F,$C7F,$D5F,$E3F,$F1F
+        dc.w $000,$113,$135,$248,$35A,$36A,$48A,$59A,$5AA,$68A,$67A,$76A,$85A,$83A,$92A,$A1A,$000,$643,$865,$A98,$000,$543,$665,$898,$000,$345,$566,$88A,$000,$134,$456,$68A
+        dc.w $000,$113,$135,$248,$35A,$37A,$48A,$59A,$5AA,$68A,$77A,$76A,$85A,$83A,$92A,$A1A,$000,$743,$865,$A98,$000,$543,$765,$898,$000,$345,$567,$88A,$000,$134,$457,$78A
+        dc.w $000,$113,$135,$248,$35A,$37A,$48A,$59A,$5AA,$69A,$77A,$76A,$85A,$93A,$92A,$A1A,$000,$743,$865,$A99,$000,$543,$765,$899,$000,$345,$567,$89A,$000,$134,$457,$78A
+        dc.w $000,$113,$135,$248,$35A,$37A,$48A,$5AA,$5AA,$69A,$77A,$76A,$85A,$93A,$A2A,$A1A,$000,$743,$865,$AA9,$000,$543,$765,$8A9,$000,$345,$567,$89A,$000,$134,$457,$78A
+        dc.w $000,$113,$136,$248,$36B,$47B,$48B,$5AB,$6BB,$69B,$78B,$86B,$85B,$94B,$A2B,$B1B,$000,$743,$866,$BA9,$000,$643,$766,$8A9,$000,$346,$667,$89B,$000,$134,$467,$78B
+        dc.w $000,$113,$136,$249,$36B,$47B,$49B,$5AB,$6BB,$79B,$78B,$87B,$95B,$94B,$A2B,$B1B,$000,$743,$976,$BA9,$000,$643,$776,$9A9,$000,$346,$677,$99B,$000,$134,$467,$79B
+        dc.w $000,$123,$236,$259,$36B,$48B,$59B,$5BB,$6BB,$7AB,$88B,$87B,$95B,$A4B,$B2B,$B1B,$000,$853,$976,$BBA,$000,$653,$876,$9BA,$000,$356,$678,$9AB,$000,$235,$568,$89B
+        dc.w $000,$123,$236,$259,$36C,$48C,$59C,$6BC,$6CC,$7AC,$89C,$97C,$96C,$A4C,$B2C,$C1C,$000,$853,$976,$CBA,$000,$653,$876,$9BA,$000,$356,$678,$9AC,$000,$235,$568,$89C
+        dc.w $000,$123,$237,$25A,$37C,$48C,$5AC,$6CC,$7CC,$7BC,$89C,$97C,$A6C,$B4C,$C2C,$C1C,$000,$853,$A77,$CCB,$000,$753,$877,$ACB,$000,$357,$778,$ABC,$000,$235,$578,$8AC
+        dc.w $000,$123,$237,$35A,$37D,$49D,$5AD,$6CD,$7DD,$8BD,$99D,$98D,$A6D,$B4D,$C3D,$D1D,$000,$953,$A87,$DCB,$000,$753,$987,$ACB,$000,$357,$789,$ABD,$000,$235,$579,$9AD
+        dc.w $000,$124,$247,$35B,$47D,$49D,$5BD,$6CD,$7DD,$8CD,$9AD,$A8D,$B6D,$C4D,$C3D,$D1D,$000,$954,$B87,$DCC,$000,$754,$987,$BCC,$000,$457,$789,$BCD,$000,$245,$579,$9BD
+        dc.w $000,$124,$247,$36B,$47E,$59E,$6BE,$6DE,$7EE,$8CE,$9AE,$A8E,$B6E,$C5E,$D3E,$E1E,$000,$964,$B87,$EDC,$000,$764,$987,$BDC,$000,$467,$789,$BCE,$000,$246,$679,$9BE
+        dc.w $000,$124,$248,$36B,$48E,$59E,$6BE,$7DE,$8EE,$9CE,$9AE,$A9E,$B7E,$C5E,$D3E,$E1E,$000,$964,$B98,$EDC,$000,$864,$998,$BDC,$000,$468,$899,$BCE,$000,$246,$689,$9BE
+        dc.w $000,$124,$248,$36C,$48F,$5AF,$6CF,$7EF,$8FF,$9DF,$ABF,$B9F,$C7F,$D5F,$E3F,$F1F,$000,$A64,$C98,$FED,$000,$864,$A98,$CED,$000,$468,$89A,$CDF,$000,$246,$68A,$ACF
+        dc.w $000,$124,$248,$36C,$48F,$5AF,$6CF,$7EF,$8FF,$9DF,$ABF,$B9F,$C7F,$D5F,$E3F,$F1F,$000,$A64,$C98,$FED,$000,$864,$A98,$CED,$000,$468,$89A,$CDF,$000,$246,$68A,$ACF
+        dc.w $000,$124,$248,$36C,$48F,$5AF,$6CF,$7EF,$8FF,$9DF,$ABF,$B9F,$C7F,$D5F,$E3F,$F1F,$000,$A64,$C98,$FED,$000,$864,$A98,$CED,$000,$468,$89A,$CDF,$000,$246,$68A,$ACF
+        dc.w $000,$124,$248,$36C,$48F,$5AF,$6CF,$7EF,$8FF,$9DF,$ABF,$B9F,$C7F,$D5F,$E3F,$F1F,$000,$A64,$C98,$FED,$000,$864,$A98,$CED,$000,$468,$89A,$CDF,$000,$246,$68A,$ACF
+        dc.w $000,$124,$248,$36C,$48F,$5AF,$6CF,$7EF,$8FF,$9DF,$ABF,$B9F,$C7F,$D5F,$E3F,$F1F,$000,$A64,$C98,$FED,$000,$864,$A98,$CED,$000,$468,$89A,$CDF,$000,$246,$68A,$ACF
+        dc.w $000,$124,$248,$36C,$48F,$5AF,$6CF,$7EF,$8FF,$9DF,$ABF,$B9F,$C7F,$D5F,$E3F,$F1F,$000,$A64,$C98,$FED,$000,$864,$A98,$CED,$000,$468,$89A,$CDF,$000,$246,$68A,$ACF
+        dc.w $000,$124,$248,$36C,$48F,$5AF,$6CF,$7EF,$8FF,$9DF,$ABF,$B9F,$C7F,$D5F,$E3F,$F1F,$000,$A64,$C98,$FED,$000,$864,$A98,$CED,$000,$468,$89A,$CDF,$000,$246,$68A,$ACF
+        dc.w $000,$124,$248,$36B,$48E,$59E,$6BE,$7DE,$8EE,$9CE,$9AE,$A9E,$B7E,$C5E,$D3E,$E1E,$000,$964,$B98,$EDC,$000,$864,$998,$BDC,$000,$468,$899,$BCE,$000,$246,$689,$9BE
+        dc.w $000,$124,$247,$36B,$47E,$59E,$6BE,$6DE,$7EE,$8CE,$9AE,$A8E,$B6E,$C5E,$D3E,$E1E,$000,$964,$B87,$EDC,$000,$764,$987,$BDC,$000,$467,$789,$BCE,$000,$246,$679,$9BE
+        dc.w $000,$124,$247,$35B,$47D,$49D,$5BD,$6CD,$7DD,$8CD,$9AD,$A8D,$B6D,$C4D,$C3D,$D1D,$000,$954,$B87,$DCC,$000,$754,$987,$BCC,$000,$457,$789,$BCD,$000,$245,$579,$9BD
+        dc.w $000,$123,$237,$35A,$37D,$49D,$5AD,$6CD,$7DD,$8BD,$99D,$98D,$A6D,$B4D,$C3D,$D1D,$000,$953,$A87,$DCB,$000,$753,$987,$ACB,$000,$357,$789,$ABD,$000,$235,$579,$9AD
+        dc.w $000,$123,$237,$25A,$37C,$48C,$5AC,$6CC,$7CC,$7BC,$89C,$97C,$A6C,$B4C,$C2C,$C1C,$000,$853,$A77,$CCB,$000,$753,$877,$ACB,$000,$357,$778,$ABC,$000,$235,$578,$8AC
+        dc.w $000,$123,$236,$259,$36C,$48C,$59C,$6BC,$6CC,$7AC,$89C,$97C,$96C,$A4C,$B2C,$C1C,$000,$853,$976,$CBA,$000,$653,$876,$9BA,$000,$356,$678,$9AC,$000,$235,$568,$89C
+        dc.w $000,$123,$236,$259,$36B,$48B,$59B,$5BB,$6BB,$7AB,$88B,$87B,$95B,$A4B,$B2B,$B1B,$000,$853,$976,$BBA,$000,$653,$876,$9BA,$000,$356,$678,$9AB,$000,$235,$568,$89B
+        dc.w $000,$113,$136,$249,$36B,$47B,$49B,$5AB,$6BB,$79B,$78B,$87B,$95B,$94B,$A2B,$B1B,$000,$743,$976,$BA9,$000,$643,$776,$9A9,$000,$346,$677,$99B,$000,$134,$467,$79B
+        dc.w $000,$113,$136,$248,$36B,$47B,$48B,$5AB,$6BB,$69B,$78B,$86B,$85B,$94B,$A2B,$B1B,$000,$743,$866,$BA9,$000,$643,$766,$8A9,$000,$346,$667,$89B,$000,$134,$467,$78B
+        dc.w $000,$113,$135,$248,$35A,$37A,$48A,$5AA,$5AA,$69A,$77A,$76A,$85A,$93A,$A2A,$A1A,$000,$743,$865,$AA9,$000,$543,$765,$8A9,$000,$345,$567,$89A,$000,$134,$457,$78A
+        dc.w $000,$113,$135,$248,$35A,$37A,$48A,$59A,$5AA,$69A,$77A,$76A,$85A,$93A,$92A,$A1A,$000,$743,$865,$A99,$000,$543,$765,$899,$000,$345,$567,$89A,$000,$134,$457,$78A
+        dc.w $000,$113,$135,$248,$35A,$37A,$48A,$59A,$5AA,$68A,$77A,$76A,$85A,$83A,$92A,$A1A,$000,$743,$865,$A98,$000,$543,$765,$898,$000,$345,$567,$88A,$000,$134,$457,$78A
 frame_no:    dc.w 0
 wire_cx:     dc.w MID_CX
 wire_zoff:   dc.w WIRE_ZOFF
@@ -1857,7 +1999,7 @@ screen:     ds.b PLANE_SIZE*6   ; plane 0 | plane 1 buffers 0,1 | plane 2 | plan
 logo_data:  incbin "assets/logo.raw"
 font_data:  incbin "assets/font.raw"
         even
-audio_silence: dc.w SILENCE_WORD  ; unsigned 8 bit silence, not 0
+audio_silence: dc.w SILENCE_WORD  ; signed 8-bit zero
 mod_data:   incbin "assets/neon.mod"
         even
 chipdata_end:

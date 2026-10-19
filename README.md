@@ -16,7 +16,7 @@ byte for byte.
 ![UBER CRACKING SERVICE - NEON VECTORS: gradient logo, 3D starfield, rotating wireframe, scroller](docs/screenshot.png)
 
 *The image is rendered by this project's test harness from the program's own Copper list and
-bitplane memory while it runs on an emulated 68000. It is not a capture from a real Amiga — see
+bitplane memory while the AGA profile runs on an emulated 68020. It is not a capture from a real Amiga — see
 [What has and has not been verified](#what-has-and-has-not-been-verified).*
 
 ## Contents
@@ -38,26 +38,18 @@ bitplane memory while it runs on an emulated 68000. It is not a capture from a r
 
 Neon Vectors AGA v5 is an audited Amiga AGA cracktro-style demo and validation project. The program
 keeps a safe OCS/ECS fallback, but this release is positioned as the AGA version: Lisa detection,
-guarded AGA register writes, low RGB nibble programming through `BPLCON3.LOCT`, PAL 68000 assembly,
+guarded AGA register writes, low RGB nibble programming through `BPLCON3.LOCT`, a guarded 68020 optimization build,
 Copper gradients, blitter-driven wireframe rendering, a 3D starfield, sprite effects, ProTracker
 playback, deterministic asset generation and release tooling that can verify the shipped assets
 byte-for-byte.
 
 ## AGA v5 path
 
-The executable has a conservative **runtime AGA/Lisa path**. It probes `DENISEID` for Lisa (`$00F8`);
-OCS/ECS machines continue through the compatibility path without touching AGA-only write registers.
-On AGA, `FMODE=0` deliberately keeps the proven 16-bit fetch timing and the display remains 320×256
-with four bitplanes, while `BPLCON3.LOCT` supplies the low RGB nibbles for colours 0–15. The existing
-Copper continues to write the high RGB nibbles, producing a 24-bit-precision palette without changing
-Copper timing or bitplane bandwidth.
+The baseline executable retains a guarded OCS/ECS path. Lisa detection masks the reserved DENISEID high byte, and the AGA path uses a 32-entry animated low RGB palette for logo accents and sprites. Palette writes occur after the Copper header, since Lisa high-colour writes also reset the low nibbles. `BPLCON4=$0011` keeps sprite colours in entries 16–31. Later Copper gradients retain normal replicated 12-bit colours.
 
-This is intentionally the **AGA v5 release** with a compatibility fallback, not an unmeasured
-8-bitplane/HAM8 rewrite. That keeps the validated timing path intact and leaves DMA headroom for
-Paula, sprites, Copper and blitter effects. The validator mechanically checks the Lisa ID, guarded
-AGA paths, conservative `FMODE`, and restoration of `BPLCON3.LOCT=0` before legacy Copper colour
-writes.
+A dedicated **68020** build uses scaled indexed vertex fetches and inline fixed-point matrix multiplication. `make aga020` produces `build/neon_vectors_020`; it checks Exec AttnFlags before entering optimized code and safely rejects older CPUs. The default `build/neon_vectors` remains 68000 compatible.
 
+Both paths keep `FMODE=0`, four displayed planes and the existing Copper/DMA layout. This does not implement HAM8, eight-plane graphics, or wide fetch modes. See [AGA and 68020 validation](docs/AGA_SUPPORT.md) for exact scope and hardware acceptance limits.
 
 ## Features
 
@@ -118,7 +110,7 @@ For an offline build, unpack a reviewed VASM source tree and run
 make            # assets (only if the generator changed) -> validation -> assemble -> hunk check
 ```
 
-The executable is `build/neon_vectors` (about 57 KiB). VASM is invoked with
+The executable is `build/neon_vectors` (about 97 KiB). VASM is invoked with
 `-m68000 -kick1hunks -Fhunkexe`, which writes a directly loadable Amiga Hunk executable with no
 separate link step. Other targets:
 
@@ -129,6 +121,9 @@ separate link step. Other targets:
 | `make doctor` | Non-mutating host/toolchain readiness report; optional dependencies are reported as SKIP |
 | `make verify-repro` | Generate the assets twice and require identical SHA-256 hashes |
 | `make mutants` | Self-test of the validator: inject 33 faults, require each to be reported |
+| `make aga020` | Build the dedicated CPU-guarded 68020 executable |
+| `make emutest-aga` / `make emutest-020` | Exercise the AGA baseline / optimized CPU paths |
+| `make aga-mutants` | Catch four AGA/68020 behavioral faults |
 | `make emutest` | Run the assembled program on an emulated 68000 and check its behaviour |
 | `make emu-mutants` | Self-test of the emulation test: inject 25 faults, require each to fail it (slow) |
 | `make release` | `clean`, build, reproducibility check, regenerate `MANIFEST.sha256` |
@@ -143,8 +138,7 @@ mounted directory or an ADF — and start it **from a Shell/CLI**:
 1> neon_vectors
 ```
 
-Recommended emulator configuration for this release: A1200 or A4000 style **AGA**, **PAL**, 68000
-compatible CPU setting, at least 512 KiB chip RAM, Kickstart 3.x or the AROS replacement ROM. The
+Recommended emulator configuration for this release: A1200 or A4000 style **AGA**, **PAL**, 68020 CPU setting for `neon_vectors_020` (or a 68000-compatible setting for the baseline), at least 512 KiB chip RAM, Kickstart 3.x or the AROS replacement ROM. The
 fallback path also runs on an A500-style OCS/ECS PAL configuration. Press the **left mouse button**
 to exit.
 
@@ -333,3 +327,8 @@ This project is licensed under GPL-3.0-only. See [`LICENSE`](LICENSE).
 ## v4 presentation pass
 
 The presentation layer now has a deliberate musical arc rather than an unchanging loop. The generated MOD contains eight arranged patterns with intro, drive, lift, peak, break, rebuild and variation sections; its bass/lead/kick/hat samples were redesigned while preserving the compact replay contract. A three-frame Copper pulse is locked to the 48-frame driving downbeat. The procedural 16-colour logo also has a revised neon/steel palette and corner-chevron framing, with all artwork still generated deterministically from source.
+
+
+## Current hardware audit
+
+The October 19 pass corrected Lisa high-write/low-write interactions, reserved identification bits, sprite palette bases, and signed Paula PCM (`$0000` silence). It added per-frame AGA assertions and a real 68020 execution profile. Historical timing figures and older screenshots above predate this pass; see [the current audit](docs/AUDIT_AGA_68020.md).

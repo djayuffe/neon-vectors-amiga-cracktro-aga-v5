@@ -243,6 +243,16 @@ def aga_palette():
     return pal
 
 
+def aga_low_palette(phase):
+    """32-entry low RGB bank: subtle 128-frame neon breathing, no extra DMA."""
+    base=[0x000,0x124,0x248,0x36C,0x48F,0x5AF,0x6CF,0x7EF,
+          0x8FF,0x9DF,0xABF,0xB9F,0xC7F,0xD5F,0xE3F,0xF1F,
+          0x000,0xA64,0xC98,0xFED,0x000,0x864,0xA98,0xCED,
+          0x000,0x468,0x89A,0xCDF,0x000,0x246,0x68A,0xACF]
+    weight=.65+.35*(1-math.cos(2*math.pi*(phase&31)/32))/2
+    return [sum(round(((v>>shift)&15)*weight)<<shift for shift in (8,4,0)) for v in base]
+
+
 if __name__ == '__main__':
     print({'copper': copper, 'sintab': sintab, 'recip_star': recip_star, 'recip_wire': recip_wire,
            'floor_base': lambda: words(floor_base()), 'bar_colors': lambda: words(bar_colors(), 8),
